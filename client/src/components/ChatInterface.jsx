@@ -6,6 +6,10 @@ import axios from 'axios';
 //Importing the css style for the chat interface
 import './ChatInterface.css';
 
+const API_BASE = process.env.REACT_APP_API_URL;
+console.log('[ChatInterface] API URL:', API_BASE, 'NODE_ENV:', process.env.NODE_ENV);
+
+
 /*
 React Component This component represents the chat interface of the application. It manages the state of messages, user input, and loading status. It also handles sending messages to the backend API and displaying responses from the AI model.
 const ChatInterface = () => {
@@ -84,9 +88,13 @@ const ChatInterface=()=>{
     setLoading(true);
     try
     {
+      if (!API_BASE) {
+        throw new Error('REACT_APP_API_URL is undefined. Check your .env file and restart the dev server.');
+      }
+
       //axios.post — sends a POST request to a backend server with two arguments: the URL of the API endpoint and the data payload (in this case, an object containing the user's message).
         const response=await axios.post(
-          'http://localhost:5000/api/chat',
+          API_BASE,
           {message:userMessage}
         );
         /* 
