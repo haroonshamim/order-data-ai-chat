@@ -8,6 +8,13 @@
     "install-all": "npm install && cd server && npm install && cd ../client && npm install"
   },
   "dependencies": {
-    "axios": "^1.13.6"
+    "axios": "^1.13.6",
+     "@google/generative-ai": "^0.24.1",
+    "@supabase/supabase-js": "^2.38.0",
+    "body-parser": "^2.2.2",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "openai": "^6.25.0"
   }
 }
