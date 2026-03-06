@@ -121,6 +121,10 @@ const ChatInterface=()=>{
     catch(error)
     {
       console.error('Chat error:', error);
+      console.error('Chat error details:', {
+        status: error.response?.status,
+        data: error.response?.data,
+      });
          setMessages((prev) => [
         ...prev,
         {
@@ -150,7 +154,8 @@ const ChatInterface=()=>{
             <div className="message-content">
               <p>{msg.text}</p>
               {msg.sql && (
-                <details className="sql-details">
+                <details className="sql-details" style={{ display: 'none' }}>
+                  
                   <summary>View SQL Query</summary>
                   <code>{msg.sql}</code>
                 </details>

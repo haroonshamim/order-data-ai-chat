@@ -2,16 +2,17 @@
 const express= require('express');
 const cors=require('cors');
 const dotenv=require('dotenv');
+const util = require('util');
 const {createClient}=require('@supabase/supabase-js');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
+const Groq = require('groq-sdk');
 // Load environment variables
 dotenv.config();
 
-// Initialize Gemini client
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModel = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-2.5-flash' });
+// Initialize GROQ client
 
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY
+});
 //Going to create instance of express server
 const app=express();
 app.use(cors());
@@ -21,20 +22,18 @@ app.use(express.json());
 
 const supabase=createClient(process.env.SUPABASE_URL,process.env.SUPABASE_SERVICE_KEY);
 
-
-
 //Testing Database Connection
 app.get('/api/health',async(req,res)=>{
 
     try{
-        const {data,error}=await supabase.from('orders').select('count',{count:'exact'});
+        const {count,error}=await supabase.from('orders').select('*',{count:'exact', head:true});
         if(error){
             throw error;
         }
            res.json({ 
       status: 'OK', 
       message: 'Server and database connected',
-      totalOrders: data?.length|| 0
+      totalOrders: count || 0
     });
   }
    catch (err) 
@@ -61,155 +60,307 @@ app.get('/api/health',async(req,res)=>{
             res.status(500).json({error:err.message});
         }
     })
+    
+function buildClientError(error) {
+  const message = String(error?.message || 'Unexpected server error').toLowerCase();
+
+  if (message.includes('429') || message.includes('quota') || message.includes('too many requests')) {
+    return {
+      error: 'AI rate limit reached. Please try again in a few seconds.',
+      code: 'AI_RATE_LIMIT',
+    };
+  }
+
+  if (message.includes('generativeai')) {
+    return {
+      error: 'AI service is temporarily unavailable. Please try again.',
+      code: 'AI_SERVICE_ERROR',
+    };
+  }
+
+  return {
+    //error: 'Unable to process request right now. Please try again.',
+error: 'Invalid Request or server error. Please check your question and try again.',
+    code: 'CHAT_REQUEST_FAILED',
+  };
+}
+
+function logFullError(prefix, error) {
+  console.error(prefix);
+  console.error('Message:', error?.message);
+  if (error?.stack) {
+    console.error('Stack:', error.stack);
+  }
+  console.error('Details:', util.inspect(error, { depth: null, colors: false }));
+}
+
+function getErrorDetailsForClient(error) {
+  return {
+    message: error?.message || 'Unknown error',
+    stack: error?.stack || null,
+    full: util.inspect(error, { depth: null, colors: false }),
+  };
+}
+
+
+function extractSQL(text) {
+
+  if (!text) return "";
+
+  // remove markdown code blocks
+  text = text.replace(/```sql/gi, "")
+             .replace(/```/g, "");
+
+  // remove "SQL Query:" prefix
+  text = text.replace(/SQL\s*QUERY\s*:/i, "");
+
+  // trim whitespace
+  text = text.trim();
+
+  // find first SELECT
+  const index = text.toUpperCase().indexOf("SELECT");
+
+  if (index !== -1) {
+    text = text.substring(index);
+  }
+
+  // Keep only the first SQL statement and remove trailing semicolon.
+  const firstSemicolon = text.indexOf(';');
+  if (firstSemicolon !== -1) {
+    text = text.substring(0, firstSemicolon);
+  }
+
+  // Remove accidental chat artifacts after the query.
+  text = text.replace(/\n\s*(EXPLANATION|ANSWER|NOTE)\b[\s\S]*$/i, '').trim();
+
+  return text.trim();
+}
+
+function validateSQL(sql) {
+
+  const forbidden = [
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "DROP",
+    "ALTER",
+    "TRUNCATE",
+    "CREATE"
+  ];
+
+  const upper = sql.toUpperCase().trim();
+
+  // Prevent stacked queries and SQL-comment based injections.
+  if (upper.includes(';') || upper.includes('--') || upper.includes('/*')) {
+    throw new Error('Invalid SQL format detected');
+  }
+
+  for (let keyword of forbidden) {
+    if (upper.includes(keyword)) {
+      throw new Error("Dangerous SQL detected");
+    }
+  }
+
+  if (!upper.startsWith("SELECT")) {
+    throw new Error("Only SELECT queries allowed");
+  }
+
+  // Restrict query scope to the orders table only.
+  const tableRefs = [...upper.matchAll(/\b(?:FROM|JOIN)\s+([A-Z0-9_."]+)/g)].map((m) =>
+    String(m[1] || '').replace(/"/g, '')
+  );
+
+  if (!tableRefs.length) {
+    throw new Error('Query must reference the orders table');
+  }
+
+  const hasNonOrdersTable = tableRefs.some((tbl) => tbl !== 'ORDERS' && tbl !== 'PUBLIC.ORDERS');
+  if (hasNonOrdersTable) {
+    throw new Error('Only orders table is allowed in queries');
+  }
+
+  return true;
+}
+async function executeSQL(sql) {
+
+  const cleanSql = sql.trim().replace(/;\s*$/, '');
+
+  const { data, error } = await supabase
+    .rpc("run_sql", { query: cleanSql });
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
 
 
 async function generateSQLFromQuestion(question) {
-  const systemPrompt = `You are a SQL expert. Convert natural language questions into SQL queries.
 
-Table schema: orders (id, order_id, customer_name, product, quantity, unit_price, total, order_date, city, status)
+  const systemPrompt = `
+You are a SQL expert.
 
-Guidelines:
-- Only return the SQL query, no explanations.
-- Use this exact table name: orders.
-- Format dates as YYYY-MM-DD.
-- For revenue/total calculations, sum the 'total' column.
-- For counts, use COUNT(*).
-- Wrap response in: SELECT ...;`;
+Convert the question into SQL.
 
-  try {
-    const prompt = `${systemPrompt}\n\nQuestion: "${question}"\nGenerate ONLY the SQL query to answer this question.`;
-    const result = await geminiModel.generateContent(prompt);
-    const sqlQuery = result.response.text().trim();
+Table:
+orders(id, order_id, customer_name, product, quantity, unit_price, total, order_date, city, status)
 
-    if (!sqlQuery) throw new Error('Gemini returned empty SQL');
+Rules:
+- Only SELECT queries
+- No explanations
+- Use table name orders
+`;
 
-    return sqlQuery;
-  } catch (err) {
-    console.error('Error generating SQL:', err);
-    throw new Error(`Failed to generate SQL: ${err.message}`);
+  const candidateModels = [
+    process.env.GROQ_MODEL,
+    'llama-3.1-8b-instant',
+    'llama-3.3-70b-versatile',
+    'mixtral-8x7b-32768',
+  ].filter(Boolean);
+
+  let sql = '';
+  let lastErr = null;
+
+  for (const model of candidateModels) {
+    try {
+      const completion = await groq.chat.completions.create({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: question }
+        ],
+        temperature: 0
+      });
+
+      sql = completion.choices?.[0]?.message?.content || '';
+      if (sql) {
+        break;
+      }
+    } catch (err) {
+      lastErr = err;
+      const msg = String(err?.message || '').toLowerCase();
+      if (msg.includes('model_decommissioned') || msg.includes('decommissioned') || msg.includes('model_not_found')) {
+        continue;
+      }
+      throw err;
+    }
   }
+
+  if (!sql) {
+    throw lastErr || new Error('No SQL returned from model');
+  }
+
+  sql = extractSQL(sql);
+
+  return sql;
 }
 
-// Chat endpoint using Gemini
-app.post('/api/chat', async (req, res) => {
+// Chat endpoint using 
+app.post("/api/chat", async (req, res) => {
+
   const { message } = req.body;
 
-  if (!message || typeof message !== 'string') {
-    return res.status(400).json({ error: 'Invalid message. Must be a non-empty string.' });
+  if (!message) {
+    return res.status(400).json({ error: "Message required" });
   }
 
-  console.log('\n📝 Received question:', message);
-
   try {
-    // Step 1: Generate SQL via Gemini
-    let sqlQuery;
-    try {
-      const sqlSystemPrompt = `You are a SQL expert. Convert natural language questions into SQL queries.
-Table schema: orders (id, order_id, customer_name, product, quantity, unit_price, total, order_date, city, status)
-Guidelines:
-- Only return the SQL query, no explanations
-- Use this exact table name: orders
-- Format dates as YYYY-MM-DD
-- For revenue/total calculations, sum the 'total' column
-- For counts, use COUNT(*)
-- Wrap response in: SELECT ...;`;
 
-      const sqlPrompt = `${sqlSystemPrompt}\n\nQuestion: "${message}"\nGenerate ONLY the SQL query.`;
-      const sqlResult = await geminiModel.generateContent(sqlPrompt);
-      sqlQuery = sqlResult.response.text().trim() || 'SELECT * FROM orders LIMIT 5;';
-      console.log('📊 Generated SQL:', sqlQuery);
-    } catch (sqlErr) {
-      console.error('Error generating SQL:', sqlErr);
-      return res.status(500).json({ error: 'Failed to generate SQL', details: sqlErr.message });
-    }
+    console.log("User Question:", message);
 
-    // Step 2: Fetch all orders from Supabase
-    const { data: allOrders, error: dbError } = await supabase.from('orders').select('*');
-    if (dbError) throw dbError;
-    console.log(`✅ Fetched ${allOrders.length} orders`);
+    // STEP 1: Generate SQL
+    const sqlQuery = await generateSQLFromQuestion(message);
 
-    // Step 3: Execute SQL locally
-    const results = await executeQueryLocally(sqlQuery, allOrders);
-    console.log('📈 Local execution results:', results);
+    console.log("Generated SQL:", sqlQuery);
 
-    // Step 4: Generate natural language explanation via Gemini
-    let naturalResponse;
-    try {
-      const responsePrompt = `You are a helpful assistant.
+    // STEP 2: Validate SQL
+    validateSQL(sqlQuery);
 
-User asked: "${message}"
-SQL results: ${JSON.stringify(results, null, 2)}
-Provide a clear, conversational answer based on these results.`;
+    // STEP 3: Execute SQL in Supabase
+    const results = await executeSQL(sqlQuery);
 
-      const aiResult = await geminiModel.generateContent(responsePrompt);
-      naturalResponse = aiResult.response.text().trim() || 'Gemini did not return a valid response.';
-      console.log('💬 AI response:', naturalResponse);
-    } catch (aiErr) {
-      console.error('AI response error:', aiErr);
-      naturalResponse = 'AI failed to generate a response.';
-    }
+    console.log("Query Results:", results);
+
+    // STEP 4: Generate natural explanation
+    const explanation = await generateExplanation(message, results);
 
     res.json({
       question: message,
       sqlQuery,
       results,
-      response: naturalResponse,
+      response: explanation
     });
-  } catch (err) {
-    console.error('Unhandled chat error:', err);
-    res.status(500).json({ error: 'Internal server error', details: err.message });
+
+  } catch (error) {
+    logFullError('Chat error (full):', error);
+
+    const clientError = buildClientError(error);
+    const shouldExposeDetails =
+      process.env.NODE_ENV !== 'production' || process.env.DEBUG_ERRORS === 'true';
+
+    const responseBody = {
+      error: clientError.error,
+      code: clientError.code,
+    };
+
+    if (shouldExposeDetails) {
+      responseBody.details = getErrorDetailsForClient(error);
+    }
+
+    res.status(500).json(responseBody);
+
   }
+
 });
 
-// Helper function for local query execution (unchanged)
-async function executeQueryLocally(sqlQuery, allData) {
-  try {
-    const query = String(sqlQuery || '').toUpperCase();
+async function generateExplanation(question, results) {
+  const prompt = `User question:\n${question}\n\nSQL results:\n${JSON.stringify(results, null, 2)}\n\nExplain the answer clearly to the user.`;
 
-    if (query.includes('SUM(') && query.includes('JANUARY')) {
-      return allData
-        .filter(
-          (order) =>
-            new Date(order.order_date).getMonth() === 0 &&
-            order.status === 'completed'
-        )
-        .reduce((sum, order) => sum + Number(order.total || 0), 0);
-    }
+  const candidateModels = [
+    process.env.GROQ_MODEL,
+    'llama-3.1-8b-instant',
+    'llama-3.3-70b-versatile',
+    'mixtral-8x7b-32768',
+  ].filter(Boolean);
 
-    if (query.includes('COUNT(*)') && query.includes('GROUP BY')) {
-      const grouped = {};
-      allData.forEach((order) => {
-        if (!grouped[order.product]) grouped[order.product] = 0;
-        grouped[order.product] += Number(order.quantity || 0);
+  let explanation = '';
+  let lastErr = null;
+
+  for (const model of candidateModels) {
+    try {
+      const completion = await groq.chat.completions.create({
+        model,
+        messages: [
+          { role: 'system', content: 'You are a helpful data analyst assistant.' },
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0.2,
       });
-      return Object.entries(grouped).map(([product, quantity]) => ({
-        product,
-        total_quantity: quantity,
-      }));
-    }
 
-    if (query.includes('TOP 3') || query.includes('LIMIT 3')) {
-      const customerSpend = {};
-      allData.forEach((order) => {
-        if (!customerSpend[order.customer_name]) {
-          customerSpend[order.customer_name] = 0;
-        }
-        customerSpend[order.customer_name] += Number(order.total || 0);
-      });
-      return Object.entries(customerSpend)
-        .map(([customer, spend]) => ({
-          customer_name: customer,
-          total_spend: spend,
-        }))
-        .sort((a, b) => b.total_spend - a.total_spend)
-        .slice(0, 3);
+      explanation = completion.choices?.[0]?.message?.content?.trim() || '';
+      if (explanation) {
+        break;
+      }
+    } catch (err) {
+      lastErr = err;
+      const msg = String(err?.message || '').toLowerCase();
+      if (msg.includes('model_decommissioned') || msg.includes('decommissioned') || msg.includes('model_not_found')) {
+        continue;
+      }
+      throw err;
     }
-
-    return allData.slice(0, 20);
-  } catch (err) {
-    console.error('Local query execution error:', err);
-    return allData.slice(0, 20);
   }
+
+  if (!explanation) {
+    if (lastErr) {
+      throw lastErr;
+    }
+    return 'No explanation generated.';
+  }
+
+  return explanation;
 }
 
 
