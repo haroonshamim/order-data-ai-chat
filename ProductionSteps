@@ -1,0 +1,94 @@
+Step 1: Create Project Structure. It creates 3 folders
+ a.mkdir -p server client
+
+Step 2:Setup .gitignore
+
+Step 3:Backend Setup (Node.js + Express)
+
+ a.cd server
+ b.npm init -y
+
+Step 4:Install Dependencies
+
+ a. npm install express cors dotenv supabase-js openai axios body-parser
+ b. npm install --save-dev nodemon
+
+Step 5:Create .env file in server folder and put required values
+
+Step 6: Create Server File
+
+Step 7: Step up packages file present inside server folder. ( we must have package file in root for backend deploy)
+
+    //This will start dev(developement) and start (production) on basic of command npm run dev. Here server.js is //.server file name
+    {
+    "scripts": {
+        "start": "node server.js",
+        "dev": "nodemon server.js"
+    }
+    }
+
+Step 8:Frontend Setup (React) 
+
+    cd client
+    //npx create-react-app . → “Use npx to run the create-react-app tool and create a new React project in the current folder.”
+
+    npx create-react-app .
+    npm install axios
+
+Step 9:Create Chat Component along with css file.
+
+Step 10:Update App.js File
+
+PREVIOUSLY (DEFAULT)
+
+/*
+import logo from './logo.svg';
+import './App.css';
+
+function App() {
+  return (
+    <div className="App">
+      <header className="App-header">
+        <img src={logo} className="App-logo" alt="logo" />
+        <p>
+          Edit <code>src/App.js</code> and save to reload.
+        </p>
+        <a
+          className="App-link"
+          href="https://reactjs.org"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Learn React
+        </a>
+      </header>
+    </div>
+  );
+}
+
+export default App;
+
+
+*/
+
+New:
+    import React from 'react';
+    import ChatInterface from './components/ChatInterface';
+    import './App.css';
+
+    function App() {
+    return <ChatInterface />;
+    }
+
+    export default App;
+
+
+Step 11:Run Backend and then front end
+
+Back End:
+    a.cd server
+    b.npm run dev
+
+Front End:
+    a.cd client
+    b.npm start
