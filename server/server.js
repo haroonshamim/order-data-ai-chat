@@ -1,5 +1,5 @@
 // #region Imports
-// Import the frameworks
+// Import frameworks
 const express= require('express');
 const cors=require('cors');
 const dotenv=require('dotenv');
@@ -13,35 +13,34 @@ const Groq = require('groq-sdk');
 dotenv.config();
 
 // Initialize GROQ client
-
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY
 });
-//Going to create instance of express server
+// Create Express app instance
 const app=express();
 app.use(cors());
 app.use(express.json());
 // #endregion
 
 // #region Database Client
-//SUPABASE INTERGRATION
+// Supabase integration
 
 const supabase=createClient(process.env.SUPABASE_URL,process.env.SUPABASE_SERVICE_KEY);
 // #endregion
 
 // #region API Routes
-//Defines a GET API endpoint at /api/health
+// Defines a GET API endpoint at /api/health
 
-//Testing Database Connection
+// Test database connection
 app.get('/api/health',async(req,res)=>{
 
     try{
-      //We wany only count
+      // We only need count
         const {count,error}=await supabase.from('orders').select('*',{count:'exact', head:true});
         if(error){
             throw error;
         }
-        //THIS IS RESPONSE FOR HEALTH CHECK API, IF COUNT IS VALID THEN ASSIGN COUNT ELSE ASSIGN 0
+        // Health-check response: if count is valid, return it; otherwise return 0.
         /* {
           "status": "OK",
           "message": "Server and database connected",
@@ -62,7 +61,7 @@ app.get('/api/health',async(req,res)=>{
     });
 
 
-//Fetch all orders data
+// Fetch all orders data
     app.get('/api/orders',async(req,res)=>{
 
         try{
@@ -80,7 +79,7 @@ app.get('/api/health',async(req,res)=>{
         }
     })
     
-    //Function to handle proper Error Messages for client based on error type
+    // Build client-facing errors based on error type.
     function buildClientError(error) 
     {
       const message = String(error?.message || 'Unexpected server error').toLowerCase();
@@ -106,8 +105,8 @@ app.get('/api/health',async(req,res)=>{
               };
 }
 
-//To Print Full Message of error in console for debugging and loggin purposes without exposing all details to client in production
-        function logFullError(prefix, error) {
+// Log full server-side error details for debugging.
+  function logFullError(prefix, error) {
           console.error(prefix);
           console.error('Message:', error?.message);
           if (error?.stack) {
@@ -116,7 +115,7 @@ app.get('/api/health',async(req,res)=>{
           console.error('Details:', util.inspect(error, { depth: null, colors: false }));
         }
 
-      //If we want to show all error details for client
+      // Return full error details when debugging is enabled.
       function getErrorDetailsForClient(error) {
         return {
           message: error?.message || 'Unknown error',
@@ -128,14 +127,12 @@ app.get('/api/health',async(req,res)=>{
 
 
       /*
-    Get VS POST Endpoints:
-      .Get is used for retrieving data or checking status without modifying anything on the server. It should be idempotent and safe.
-      .Post is used for sending data to the server that may cause changes or trigger processing. It is not necessarily idempotent.
+      GET vs POST endpoints:
+      - GET retrieves data/status and should be idempotent.
+      - POST sends input data and may trigger processing.
 
-      app.get("/api/health", …) → used for checking server/database status, no data is sent in the body.
-
-      app.post("/api/chat", …) → used for sending user input (like a message) to the server, which is then processed.
-
+      app.get("/api/health", ...): checks server/database status.
+      app.post("/api/chat", ...): sends user input for processing.
       */
 app.post("/api/chat", async (req, res) => {
 
@@ -149,23 +146,32 @@ app.post("/api/chat", async (req, res) => {
 
         console.log("User Question:", message);
 
-        // STEP 1: Generate SQL
-        const sqlQuery = await AskLLmTogenerateSQLFromUserQuestion(message);
+        // Step 1: Generate SQL response text from AI.
+        const aiGeneratedText = await AskLLmTogenerateSQLFromUserQuestion(message);
+
+        // Step 2: Split SQL query and surrounding wording from AI response.
+        const { sqlQuery, surroundingWording } = splitSQLQueryAndWording(aiGeneratedText);
 
         
 
-        // STEP 2: Validate SQL And throw error if any forbidden query found.
+        // Step 3: Validate SQL and throw if forbidden patterns exist.
         validateSQL(sqlQuery);
 
-        // STEP 3: Execute SQL in Supabase
-        const results = await executeSQL(sqlQuery);
+        // Step 4: Execute SQL in Supabase.
+        const queryResults = await executeSQL(sqlQuery);
+
+        // Append non-SQL wording into results payload.
+        const results = {
+          queryResults,
+          aiContext: surroundingWording,
+        };
 
         console.log("Query Results:", results);
 
-        // STEP 4: Generate natural explanation
+        // Step 5: Generate natural-language explanation.
         const explanation = await generateExplanation(message, results);
 
-        //Sending Response
+        // Send response
         res.json({
           question: message,
           sqlQuery,
@@ -210,7 +216,7 @@ function validateSQL(sql) {
   ];
 
   const upper = sql.toUpperCase().trim();
-
+console.log("Validating SQL:", upper);
   // Prevent stacked queries and SQL-comment based injections.
   if (upper.includes(';') || upper.includes('--') || upper.includes('/*')) {
     throw new Error('INVALID QUERY ERROR:Invalid SQL format detected');
@@ -226,10 +232,27 @@ function validateSQL(sql) {
     throw new Error("INVALID QUERY ERROR:Only SELECT queries allowed");
   }
 
-  // Restrict query scope to the orders table only.
-  const tableRefs = [...upper.matchAll(/\b(?:FROM|JOIN)\s+([A-Z0-9_."]+)/g)].map((m) =>
-    String(m[1] || '').replace(/"/g, '')
-  );
+  // Restrict query scope to real FROM/JOIN table clauses only (ignore function bodies like EXTRACT(...)).
+  const tableRefs = [];
+  let depth = 0;
+  const fromJoinRegex = /\b(?:FROM|JOIN)\b\s+([A-Z0-9_."]+)/g;
+  let match;
+
+  while ((match = fromJoinRegex.exec(upper)) !== null) {
+    const prefix = upper.slice(0, match.index);
+    depth = 0;
+
+    for (const ch of prefix) {
+      if (ch === '(') depth += 1;
+      if (ch === ')') depth = Math.max(0, depth - 1);
+    }
+
+    if (depth !== 0) {
+      continue;
+    }
+
+    tableRefs.push(String(match[1] || '').replace(/"/g, ''));
+  }
 
   if (!tableRefs.length) {
     throw new Error('INVALID QUERY ERROR:Query must reference the orders table');
@@ -244,7 +267,8 @@ function validateSQL(sql) {
 }
 
 // #region SQL Execution and Generation
-//I have created a separate macro to execute SQL queries against the Supabase database. This function takes a SQL string as input, performs basic sanitization, and then uses the Supabase client to run the query. It also handles errors gracefully, throwing them up the stack to be caught in the main API route handler. This separation of concerns helps keep the code organized and makes it easier to maintain and test the SQL execution logic independently from the rest of the application.
+// Execute SQL query against Supabase.
+// This keeps SQL execution isolated from route logic.
 
 async function executeSQL(sql) {
 
@@ -264,7 +288,7 @@ async function executeSQL(sql) {
 
 async function AskLLmTogenerateSQLFromUserQuestion(question) {
 
-  //NOW WE ARE GOING TO TELL AI THAT WE WANT SQL QUERY FROM GIVEN USER QUESTION AND ALSO PROVIDE TABLE STRUCTURE AND RULES TO FOLLOW FOR SQL GENERATION
+  // Ask AI to convert the user question into SQL.
 
   const systemPrompt = `
 You are a SQL expert.
@@ -280,7 +304,7 @@ Rules:
 - Use table name orders
 `;
 
-//It Removes Falsy Values from the array, so if GROQ_MODEL is not set, it will skip it and try the next models in the list. This allows for graceful fallback to other models if the specified one is unavailable or decommissioned.
+// Remove falsy entries so fallback models are used safely.
   const candidateModels = [
     process.env.GROQ_MODEL,
     'llama-3.1-8b-instant',
@@ -288,35 +312,18 @@ Rules:
     'mixtral-8x7b-32768',
   ].filter(Boolean);
 
-  let sql = '';
+  let aiResponse = '';
   let lastErr = null;
 
-  //Try Each Model Until a result is found
+  // Try each model until a result is returned.
 
-  /*
-Temperature in Groq's API is a parameter (ranging from 0 to 2) that controls the randomness and creativity of AI-generated text. Lower values (e.g., 0.2) make outputs more focused, precise, and deterministic, while higher values (e.g., 0.8–1.0) introduce more diversity, creativity, and randomness.
-
-  */
+  // Temperature 0 keeps SQL generation deterministic.
   for (const model of candidateModels) {
     try {
       const completion = await groq.chat.completions.create({
         model,
 
-        /*
-
-          //The Message format is as follows
-        [
-            { 
-              "role": "system", 
-              "content": "You are a SQL expert. Convert the question into SQL. ......" 
-            },
-            { 
-              "role": "user", 
-              "content": "tell me total rows of data" 
-            }
-        ]
-
-        */
+        // Message format uses standard system + user roles.
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: question }
@@ -324,56 +331,10 @@ Temperature in Groq's API is a parameter (ranging from 0 to 2) that controls the
         temperature: 0
       });
 
-
-      /*CHOICES:
-
-              Why choices (plural)?
-        The AI API can actually generate multiple different responses to the same prompt in a single request. Each response is one "choice".
-        You control this with a parameter called n:
-        javascriptgroq.chat.completions.create({
-          model,
-          messages: [...],
-          n: 3  // give me 3 different responses
-        })
-        This would return:
-        json{
-          "choices": [
-            { "message": { "content": "SELECT COUNT(*) FROM users;" } },
-            { "message": { "content": "SELECT COUNT(*) AS total FROM users;" } },
-            { "message": { "content": "SELECT COUNT(1) FROM users;" } }
-          ]
-        }
-
-        In your case, you didn't pass n, so it defaults to n: 1 — meaning only one choice comes back. But the API still wraps it in an array for consistency, so you always access it the same way regardless of how many you asked for.
-        That's why you do:
-        javascriptchoices?.[0]  // just grab the first (and only) one
-
-        Simple analogy:
-        It's like asking a friend for restaurant suggestions:
-
-        n: 1 → they give you 1 option, but it still comes in a list: ["Burger King"]
-        n: 3 → they give you 3 options: ["Burger King", "McDonald's", "KFC"]
-
-        The list format stays the same either way.
-
-*/
-
-      /*
-      completion.choices?.[0]?.message?.content
-      ```
-
-      Think of it as drilling down a nested object:
-      ```
-      completion
-        └── choices          (array of possible responses)
-              └── [0]        (first response)
-                    └── message
-                          └── content   ← the actual text we want
-
-      */
-      sql = completion.choices?.[0]?.message?.content || '';
-      //Breaks the loop if a valid SQL is generated, otherwise it will try the next model in the list. This allows for graceful degradation in case some models are unavailable or fail to generate a response.
-      if (sql) {
+      // Read content from the first completion choice.
+      aiResponse = completion.choices?.[0]?.message?.content || '';
+      // Break when a valid response is generated.
+      if (aiResponse) {
         break;
       }
     } catch (err) {
@@ -386,48 +347,74 @@ Temperature in Groq's API is a parameter (ranging from 0 to 2) that controls the
     }
   }
 
-  if (!sql) {
+  if (!aiResponse) {
     throw lastErr || new Error('No SQL returned from model');
   }
-  console.log("Raw SQL from AI:", sql);
-  sql = extractSQL(sql);
-  console.log("Extracted SQL:", sql);
+  console.log("Raw AI SQL response:", aiResponse);
 
-  return sql;
+  return aiResponse;
 }
 // #endregion
 
 // #region SQL Response Parsing
-//Function to get clear sql query from AI response by removing any markdown formatting, explanations, or extra text that the model might have included. This helps ensure that only the actual SQL query is executed against the database, improving reliability and security.
+function splitSQLQueryAndWording(text) {
+
+        const rawText = String(text || '').trim();
+        if (!rawText) {
+          return { sqlQuery: '', surroundingWording: '' };
+        }
+
+        const cleanedText = rawText.replace(/```sql/gi, '').replace(/```/g, '').trim();
+        const upperText = cleanedText.toUpperCase();
+        const selectIndex = upperText.indexOf('SELECT');
+
+        if (selectIndex === -1) {
+          return { sqlQuery: '', surroundingWording: cleanedText };
+        }
+
+        const semicolonIndex = cleanedText.indexOf(';', selectIndex);
+        const sqlEndIndex = semicolonIndex === -1 ? cleanedText.length : semicolonIndex + 1;
+
+        const sqlChunk = cleanedText.substring(selectIndex, sqlEndIndex).trim();
+        const sqlQuery = extractSQL(sqlChunk);
+
+        const beforeSql = cleanedText.substring(0, selectIndex).trim();
+        const afterSql = cleanedText.substring(sqlEndIndex).trim();
+        const surroundingWording = [beforeSql, afterSql].filter(Boolean).join('\n').trim();
+
+        return { sqlQuery, surroundingWording };
+      }
+
+// Extract SQL query by removing markdown wrappers and extra text.
 function extractSQL(text) 
 {
 
         if (!text) return "";
 
-        // remove markdown code blocks
+        // Remove markdown code blocks.
         text = text.replace(/```sql/gi, "")
                   .replace(/```/g, "");
 
-        // remove "SQL Query:" prefix
+        // Remove "SQL Query:" prefix.
         text = text.replace(/SQL\s*QUERY\s*:/i, "");
 
-        // trim whitespace
+        // Trim whitespace.
         text = text.trim();
 
-        // find first SELECT
+        // Find first SELECT.
         const index = text.toUpperCase().indexOf("SELECT");
 
         if (index !== -1) {
           text = text.substring(index);
         }
 
-        // Keep only the first SQL statement and remove trailing semicolon.
+        // Keep only first SQL statement and remove trailing semicolon.
         const firstSemicolon = text.indexOf(';');
         if (firstSemicolon !== -1) {
           text = text.substring(0, firstSemicolon);
         }
 
-        // Remove accidental chat artifacts after the query.
+        // Remove accidental chat artifacts after query.
         text = text.replace(/\n\s*(EXPLANATION|ANSWER|NOTE)\b[\s\S]*$/i, '').trim();
 
         return text.trim();
@@ -437,7 +424,7 @@ function extractSQL(text)
 
 
       // #region Explanation Generation
-      //Now we have results from SQL query execution, we want to generate a clear and concise explanation for the user that connects their original question with the data we retrieved. This helps make the information more accessible and actionable, especially for users who may not be familiar with SQL or raw data formats.
+      // Generate a concise explanation from question + SQL results payload.
 async function generateExplanation(question, results) {
   const prompt = `User question:\n${question}\n\nSQL results:\n${JSON.stringify(results, null, 2)}\n\nExplain the answer clearly to the user.`;
 
