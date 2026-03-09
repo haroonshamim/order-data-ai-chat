@@ -28,6 +28,34 @@ app.use(express.json());
 const supabase=createClient(process.env.SUPABASE_URL,process.env.SUPABASE_SERVICE_KEY);
 // #endregion
 
+// #region Database Schema Definition
+const DB_SCHEMA = {
+  orders: {
+    columns: [
+      { name: 'order_id', type: 'integer', description: 'Unique order identifier' },
+      { name: 'customer_name', type: 'text', description: 'Customer name' },
+      { name: 'product', type: 'text', description: 'Product name' },
+      { name: 'quantity', type: 'integer', description: 'Quantity ordered' },
+      { name: 'unit_price', type: 'numeric', description: 'Price per unit' },
+      { name: 'total', type: 'numeric', description: 'Total amount (REVENUE COLUMN)' },
+      { name: 'order_date', type: 'date', description: 'Order date (YYYY-MM-DD)' },
+      { name: 'city', type: 'text', description: 'City name' },
+      { name: 'status', type: 'text', description: 'Order status (completed, pending, etc)' }
+    ]
+  }
+};
+// #endregion
+
+
+
+
+
+
+
+
+
+
+
 // #region API Routes
 // Defines a GET API endpoint at /api/health
 
@@ -134,72 +162,136 @@ app.get('/api/health',async(req,res)=>{
       app.get("/api/health", ...): checks server/database status.
       app.post("/api/chat", ...): sends user input for processing.
       */
-app.post("/api/chat", async (req, res) => {
+// Updated chat endpoint with tool use support
+// Chat endpoint with Tool Use
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { message } = req.body;
 
-      const { message } = req.body;
+    if (!message?.trim()) {
+      return res.status(400).json({
+        error: 'Message cannot be empty',
+        code: 'INVALID_INPUT'
+      });
+    }
 
-      if (!message) {
-        return res.status(400).json({ error: "Message required" });
+    console.log('User Question:', message);
+
+    // Build system prompt with schema info
+    const systemPrompt = buildSystemPrompt();
+
+    // Initialize messages with system context
+    const messages = [
+      {
+        role: "system",
+        content: systemPrompt
+      },
+      {
+        role: "user",
+        content: message
       }
-     
-      try {
+    ];
 
-        console.log("User Question:", message);
+    // Call Groq with tools
+    let response = await groq.chat.completions.create({
+      model: process.env.GROQ_MODEL || 'mixtral-8x7b-32768',
+      messages: messages,
+      tools: AVAILABLE_TOOLS,
+      tool_choice: "auto",
+      max_tokens: 4096
+    });
 
-        // Step 1: Generate SQL response text from AI.
-        const aiGeneratedText = await AskLLmTogenerateSQLFromUserQuestion(message);
+    console.log('Initial Groq Response:', response.choices[0].message);
 
-        // Step 2: Split SQL query and surrounding wording from AI response.
-        const { sqlQuery, surroundingWording } = splitSQLQueryAndWording(aiGeneratedText);
+    let sqlQuery = null;
+    let queryResults = null;
 
-        
+    // Process tool calls in a loop
+    while (response.choices[0].message.tool_calls) {
+      const toolCalls = response.choices[0].message.tool_calls;
 
-        // Step 3: Validate SQL and throw if forbidden patterns exist.
-        validateSQL(sqlQuery);
+      // Add assistant response to messages
+      messages.push({
+        role: "assistant",
+        content: response.choices[0].message.content || '',
+        tool_calls: toolCalls
+      });
 
-        // Step 4: Execute SQL in Supabase.
-        const queryResults = await executeSQL(sqlQuery);
+      // Process each tool call
+      const toolResults = [];
+      for (const toolCall of toolCalls) {
+        const toolName = toolCall.function.name;
+        const toolInput = JSON.parse(toolCall.function.arguments);
 
-        // Append non-SQL wording into results payload.
-        const results = {
-          queryResults,
-          aiContext: surroundingWording,
-        };
+        console.log(`Executing tool: ${toolName}`, toolInput);
 
-        console.log("Query Results:", results);
+        try {
+          const result = await processTool(toolName, toolInput);
 
-        // Step 5: Generate natural-language explanation.
-        const explanation = await generateExplanation(message, results);
+          // Store SQL query for response
+          if (toolName === "execute_sql_query") {
+            sqlQuery = toolInput.query;
+            queryResults = result;
+          }
 
-        // Send response
-        res.json({
-          question: message,
-          sqlQuery,
-          results,
-          response: explanation
-        });
+          toolResults.push({
+            tool_call_id: toolCall.id,
+            role: "tool",
+            name: toolName,
+            content: JSON.stringify(result)
+          });
 
-      } catch (error) {
-        logFullError('Chat error (full):', error);
-
-        const clientError = buildClientError(error);
-        const shouldExposeDetails =
-          process.env.NODE_ENV !== 'production' || process.env.DEBUG_ERRORS === 'true';
-
-        const responseBody = {
-          error: clientError.error,
-          code: clientError.code,
-        };
-
-        if (shouldExposeDetails) {
-          responseBody.details = getErrorDetailsForClient(error);
+          console.log(`Tool result for ${toolName}:`, result);
+        } catch (toolError) {
+          console.error(`Error executing tool ${toolName}:`, toolError);
+          toolResults.push({
+            tool_call_id: toolCall.id,
+            role: "tool",
+            name: toolName,
+            content: JSON.stringify({
+              error: toolError.message,
+              details: toolError.details || null
+            })
+          });
         }
+      }
 
-        res.status(500).json(responseBody);
+      // Add tool results to messages
+      messages.push(...toolResults);
 
+      // Call Groq again with tool results
+      response = await groq.chat.completions.create({
+        model: process.env.GROQ_MODEL || 'mixtral-8x7b-32768',
+        messages: messages,
+        tools: AVAILABLE_TOOLS,
+        max_tokens: 4096
+      });
+
+      console.log('Groq Response after tool use:', response.choices[0].message);
+    }
+
+    // Get final response
+    const finalResponse = response.choices[0].message.content || 'Unable to generate response';
+
+    res.json({
+      question: message,
+      sqlQuery: sqlQuery,
+      results: queryResults,
+      response: finalResponse
+    });
+
+  } catch (error) {
+    logFullError('Chat endpoint error:', error);
+    const clientError = buildClientError(error);
+    const statusCode = error.status || 500;
+
+    res.status(statusCode).json({
+      ...clientError,
+      ...(process.env.DEBUG_ERRORS === 'true' && { details: getErrorDetailsForClient(error) })
+    });
   }
-
 });
+
 // #endregion
 
 // #region Chat Helpers
@@ -477,6 +569,141 @@ async function generateExplanation(question, results) {
 // #endregion
 
 
+//#region 
+
+// Add this near your other utility functions
+
+// Define available tools for Groq
+// #region Tool Definitions
+const AVAILABLE_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "execute_sql_query",
+      description: "Execute a SQL SELECT query against the orders database to fetch and analyze order data",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "The SQL SELECT query to execute. Use ONLY columns that exist: order_id, customer_name, product, quantity, unit_price, total, order_date, city, status"
+          }
+        },
+        required: ["query"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_table_schema",
+      description: "Get the schema and column information for a database table",
+      parameters: {
+        type: "object",
+        properties: {
+          table_name: {
+            type: "string",
+            description: "The name of the table (use 'orders')"
+          }
+        },
+        required: ["table_name"]
+      }
+    }
+  }
+];
+// #endregion
+// Tool execution handler
+async function processTool(toolName, toolInput) {
+  switch (toolName) {
+    case "execute_sql_query":
+      return await executeSQL(toolInput.query);
+    
+    case "get_table_schema":
+      return await getTableSchema(toolInput.table_name);
+    
+    default:
+      return { error: `Unknown tool: ${toolName}` };
+  }
+}
+
+// Helper function to get table schema
+async function getTableSchema(tableName) {
+  try {
+    const { data, error } = await supabase
+      .from(tableName)
+      .select('*')
+      .limit(0);
+    
+    if (error) throw error;
+    
+    return {
+      table: tableName,
+      columns: Object.keys(data || {}).join(', ')
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+function buildSystemPrompt() {
+  const schemaInfo = DB_SCHEMA.orders.columns
+    .map(col => `  - ${col.name} (${col.type}): ${col.description}`)
+    .join('\n');
+
+  return `You are an AI assistant helping users analyze order data from a Supabase database.
+
+DATABASE SCHEMA - Orders Table:
+${schemaInfo}
+
+CRITICAL RULES FOR SQL GENERATION:
+1. ONLY use these exact column names: order_id, customer_name, product, quantity, unit_price, total, order_date, city, status
+2. For REVENUE/SALES: Always use the 'total' column (NOT 'revenue' or any other name)
+3. For DATE filtering: Use order_date column with DATE() or EXTRACT() functions
+4. For MONTH filtering: Use EXTRACT(MONTH FROM order_date) = X
+5. For YEAR filtering: Use EXTRACT(YEAR FROM order_date) = X
+6. Always write SELECT statements only - NEVER INSERT, UPDATE, DELETE, etc.
+7. Use proper SQL syntax: SUM(), COUNT(), AVG(), GROUP BY, WHERE, ORDER BY
+8. Format numbers with proper aggregation functions
+9. Provide clear explanations of results
+10. If a requested column doesn't exist, explain which column to use instead
+
+EXAMPLE QUERIES:
+- Total revenue in January: SELECT SUM(total) as total_revenue FROM orders WHERE EXTRACT(MONTH FROM order_date) = 1
+- Orders by city: SELECT city, COUNT(*) as order_count, SUM(total) as total_revenue FROM orders GROUP BY city
+- Top product: SELECT product, SUM(quantity) as total_quantity, SUM(total) as revenue FROM orders GROUP BY product ORDER BY revenue DESC LIMIT 1`;
+}
+
+// Build client-facing errors
+function buildClientError(error) {
+  const message = String(error?.message || 'Unexpected server error').toLowerCase();
+
+  if (message.includes('429') || message.includes('quota') || message.includes('too many requests')) {
+    return {
+      error: 'AI rate limit reached. Please try again in a few seconds.',
+      code: 'AI_RATE_LIMIT',
+    };
+  }
+
+  if (message.includes('does not exist') || message.includes('column')) {
+    return {
+      error: 'Database query failed. The AI generated an incorrect SQL query. Please try rephrasing your question.',
+      code: 'DB_QUERY_ERROR',
+    };
+  }
+
+  if (message.includes('groq') || message.includes('ai service')) {
+    return {
+      error: 'AI service is temporarily unavailable. Please try again.',
+      code: 'AI_SERVICE_ERROR',
+    };
+  }
+
+  return {
+    error: 'Unable to process your request. Please try again with a different question.',
+    code: 'CHAT_REQUEST_FAILED',
+  };
+}
+//#endregion
     // #region Server Bootstrap
     const PORT=process.env.PORT||5000;
     app.listen(PORT, () => {
