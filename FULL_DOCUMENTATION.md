@@ -3,16 +3,20 @@
 This document reflects the current implementation in:
 - `client/src/components/ChatInterface.jsx`
 - `server/server.js`
+- `server/routes/health.js`
+- `server/routes/orders.js`
+- `server/routes/chat.js`
+- `server/config/clients.js`
 
 ## 1. Project Overview
 
 The app is a chat-based analytics assistant for order data.
 
 - Frontend sends user questions to backend.
-- Backend uses Groq to generate SQL.
+- Backend uses Groq tool-calling to decide when SQL should run.
 - Backend validates SQL for safety.
 - Backend executes SQL through Supabase RPC (`run_sql`).
-- Backend uses Groq again to generate a natural-language explanation.
+- Backend sends tool results back to Groq to produce the final explanation.
 - Frontend displays answer + SQL query details.
 
 ## 2. Frontend (`ChatInterface.jsx`)
@@ -47,42 +51,51 @@ On API failure, frontend:
 - Logs status + backend response payload (`console.error('Chat error details:', { status, data })`).
 - Appends a readable error message in the chat.
 
-## 3. Backend (`server.js`)
+## 3. Backend
+
+Backend structure:
+
+- `server/server.js` initializes Express and mounts route modules.
+- `server/config/clients.js` initializes shared Supabase and Groq clients.
+- `server/routes/health.js` contains the health-check endpoint.
+- `server/routes/orders.js` contains the orders endpoint.
+- `server/routes/chat.js` contains the chat endpoint and its helper functions.
 
 ## 3.1 Core Dependencies
 
 - `express`, `cors`, `dotenv`
 - `@supabase/supabase-js`
 - `groq-sdk`
-- `@google/generative-ai` is still imported/initialized in code, but chat flow currently uses Groq.
 
 ## 3.2 Initialization
 
 - Loads env variables with `dotenv.config()`.
-- Creates Supabase client using service key.
-- Creates Groq client with `GROQ_API_KEY`.
+- Creates the Express app in `server/server.js`.
+- Creates the shared Supabase client in `server/config/clients.js` using service key credentials.
+- Creates the shared Groq client in `server/config/clients.js` using `GROQ_API_KEY`.
+- Mounts routes under `/api/health`, `/api/orders`, and `/api/chat`.
 
 ## 3.3 Utility Functions
 
-- `extractSQL(text)`:
-  - Removes markdown fences/prefix text.
-  - Keeps SQL starting from first `SELECT`.
-  - Truncates at first semicolon.
-  - Removes extra chat artifacts.
-
 - `validateSQL(sql)`:
-  - Allows only `SELECT`.
-  - Blocks dangerous keywords (`INSERT`, `UPDATE`, `DELETE`, etc.).
-  - Blocks SQL-comment/injection patterns (`--`, `/*`, `;`).
+  - Blocks dangerous keywords (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`).
 
 - `executeSQL(sql)`:
+  - Validates SQL before execution.
   - Cleans trailing semicolon.
   - Executes SQL via `supabase.rpc('run_sql', { query })`.
+
+- `processTool(toolName, toolInput)`:
+  - Executes model-requested tools.
+  - Currently supports `execute_sql_query`.
+
+- `buildSystemPrompt()`:
+  - Defines the `orders` schema and query rules for the model.
 
 - Error helpers:
   - `buildClientError(error)` returns sanitized API errors.
   - `logFullError(prefix, error)` logs detailed server-side diagnostics.
-  - `getErrorDetailsForClient(error)` adds debug details in non-production mode.
+  - `getErrorDetailsForClient(error)` adds debug details when `DEBUG_ERRORS=true`.
 
 ## 3.4 API Endpoints
 
@@ -99,24 +112,25 @@ On API failure, frontend:
 
 Flow:
 1. Validate `message` input.
-2. Generate SQL from question using Groq (`generateSQLFromQuestion`).
-3. Validate SQL safety (`validateSQL`).
-4. Execute SQL on Supabase RPC (`executeSQL`).
-5. Generate natural-language explanation using Groq (`generateExplanation`).
-6. Return `{ question, sqlQuery, results, response }`.
+2. Build a system prompt describing the `orders` table and SQL rules.
+3. Send the user message to Groq with the available tool definition.
+4. If Groq requests a tool call, execute `execute_sql_query` through `processTool()`.
+5. Validate and run the SQL through Supabase RPC using `executeSQL()`.
+6. Send tool results back to Groq until it returns a final answer.
+7. Return `{ question, sqlQuery, results, response }`.
 
 Error response:
 - Returns sanitized `error` + `code`.
-- In non-production (or `DEBUG_ERRORS=true`), includes `details` with message/stack/full dump.
+- When `DEBUG_ERRORS=true`, includes `details` with message/stack/full dump.
 
 ## 4. End-to-End Lifecycle
 
 1. User asks question in chat UI.
 2. Frontend posts to backend chat endpoint.
-3. Groq returns SQL.
-4. Backend validates SQL.
-5. Supabase `run_sql` RPC executes query.
-6. Groq converts result JSON into user-friendly explanation.
+3. Groq decides whether to call the SQL execution tool.
+4. Backend validates and executes the SQL.
+5. Supabase `run_sql` RPC returns query results.
+6. Groq uses the tool results to produce a user-friendly explanation.
 7. Frontend renders response and SQL details.
 
 ## 5. Environment Variables
@@ -136,6 +150,7 @@ Frontend (`client/.env.development`):
 ## 6. Important Notes
 
 - `run_sql` RPC must exist in Supabase for query execution.
-- Backend still imports Gemini client but current chat flow uses Groq for SQL and explanation.
+- The backend is now split into route files for easier maintenance.
+- Shared external clients are centralized in `server/config/clients.js`.
 - If model names are deprecated on Groq, update `GROQ_MODEL`.
 
