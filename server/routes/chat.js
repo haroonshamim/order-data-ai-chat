@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const util = require('util');
-const { supabase, groq } = require('../config/clients');
+const { turso, groq } = require('../config/clients');
 
 // #region Tool Definitions
 
@@ -42,7 +42,7 @@ function validateSQL(sql) {
   return true;
 }
 
-// Execute SQL query against Supabase.
+// Execute SQL query against Turso.
 // This keeps SQL execution isolated from route logic.
 async function executeSQL(sql) {
   try {
@@ -51,11 +51,9 @@ async function executeSQL(sql) {
 
     console.log('Executing SQL:', cleanedSQL);
 
-    const { data, error } = await supabase.rpc('run_sql', { query: cleanedSQL });
+    const result = await turso.execute(cleanedSQL);
 
-    if (error) throw error;
-
-    return data || [];
+    return result.rows || [];
   } catch (err) {
     console.error('SQL Execution Error:', err);
     throw err;
@@ -80,9 +78,10 @@ DATABASE SCHEMA:
 KEY RULES:
 1. Use the execute_sql_query tool to query the database
 2. The 'total' column contains revenue/sales amount
-3. Use EXTRACT(MONTH FROM order_date) = 1 for January
+3. Use strftime('%m', order_date) = '01' for January (SQLite syntax)
 4. Only use SELECT queries
-5. Format your response clearly with the results`;
+5. Use SQLite-compatible SQL syntax
+6. Format your response clearly with the results`;
 }
 
 // Build client-facing errors based on error type.

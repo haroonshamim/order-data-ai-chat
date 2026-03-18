@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { supabase } = require('../config/clients');
+const { turso } = require('../config/clients');
 
 // Test database connection
 //that route is not active by itself yet. It becomes active only when the router is mounted into the main app, like in server.js:
@@ -10,11 +10,8 @@ const { supabase } = require('../config/clients');
 router.get('/', async (req, res) => {
   try {
     // We only need count
-    const { count, error } = await supabase
-      .from('orders')
-      .select('*', { count: 'exact', head: true });
-
-    if (error) throw error;
+    const result = await turso.execute('SELECT COUNT(*) AS count FROM orders');
+    const count = result.rows[0]?.count ?? 0;
 
     // Health-check response: if count is valid, return it; otherwise return 0.
     /* {
@@ -25,7 +22,7 @@ router.get('/', async (req, res) => {
     res.json({
       status: 'OK',
       message: 'Server and database connected',
-      totalOrders: count || 0
+      totalOrders: count
     });
   } catch (err) {
     console.error('Database Connection Error:', err);

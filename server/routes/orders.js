@@ -1,15 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const { supabase } = require('../config/clients');
+const { turso } = require('../config/clients');
 
 // Fetch all orders data
 router.get('/', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('orders').select('*');
+    const result = await turso.execute('SELECT * FROM orders');
 
-    if (error) throw error;
-
-    res.json({ orders: data });
+    res.json({ orders: result.rows });
   } catch (err) {
     console.error('Error fetching orders:', err);
     res.status(500).json({ error: err.message });
