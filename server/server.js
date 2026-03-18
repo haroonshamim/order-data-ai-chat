@@ -1,21 +1,16 @@
 // #region Imports
-const express = require('express');
-const cors = require('cors');
-const dotenv = require('dotenv');
+const { createApp } = require('./config/appSetup');
 // #endregion
 
 // #region Environment and App Setup
-dotenv.config();
-
-const app = express();
-app.use(cors());
-app.use(express.json());
+const app = createApp();
 // #endregion
 
 // #region API Routes
 app.use('/api/health', require('./routes/health'));
 app.use('/api/orders', require('./routes/orders'));
 app.use('/api/chat',   require('./routes/chat'));
+app.use('/api/test',   require('./routes/testroute'));
 // #endregion
 
 // #region Server Bootstrap

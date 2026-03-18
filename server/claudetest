@@ -1,9 +1,26 @@
+require('dotenv').config();
 const Anthropic = require('@anthropic-ai/sdk');
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const result = await client.messages.create({
-  model: 'claude-haiku-4-5-20251001', // fast + cheap
-  max_tokens: 200,
-  messages: [{ role: 'user', content: prompt }]
+async function main() {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error('Missing ANTHROPIC_API_KEY in environment variables.');
+  }
+
+  const prompt = process.argv.slice(2).join(' ') || 'Say hello in one short sentence.';
+  const client = new Anthropic({ apiKey });
+
+  const result = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 200,
+    messages: [{ role: 'user', content: prompt }]
+  });
+
+  const text = result.content?.[0]?.text;
+  console.log(text || 'No text returned from Claude response.');
+}
+
+main().catch((err) => {
+  console.error('Claude test failed:', err.message);
+  process.exit(1);
 });
-const text = result.content[0].text;

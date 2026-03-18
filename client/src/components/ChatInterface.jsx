@@ -3,6 +3,10 @@ import React, { useState, useRef, useEffect } from 'react';
 //This library is used to make HTTP requests from the frontend to the backend API. 
 //It simplifies the process of sending asynchronous requests and handling responses, making it easier to communicate with the server and retrieve data or send user input for processing.
 import axios from 'axios';
+import ChatHeader from './ChatHeader';
+import ChatMessages from './ChatMessages';
+import ChatInputForm from './ChatInputForm';
+import { INITIAL_BOT_MESSAGE } from '../constants/chatConstants';
 //Importing the css style for the chat interface
 import './ChatInterface.css';
 
@@ -28,12 +32,7 @@ const ChatInterface=()=>{
   const [messages,setMessages]=useState(
     
     //This is initial Data for the chat interface, which contains a welcome message from the bot.
-    [
-    {
-      type:'bot',
-      text: 'Hi! 👋 I can help you analyze your order data. Ask me questions like:\n• "What was the total revenue in January?"\n• "Which product sold the most?"\n• "Show me the top 3 customers by total spend"',
-    },
-  ]);
+    [INITIAL_BOT_MESSAGE]);
 
 
 
@@ -143,48 +142,18 @@ const ChatInterface=()=>{
  
   return (
     <div className="chat-container">
-      <div className="chat-header">
-        <h1>📊 Order Analytics AI Chat</h1>
-        <p>Ask natural language questions about your order data</p>
-      </div>
-
-      <div className="messages">
-        {messages.map((msg, idx) => (
-          <div key={idx} className={`message ${msg.type}`}>
-            <div className="message-content">
-              <p>{msg.text}</p>
-              {msg.sql && (
-                <details className="sql-details" style={{ display: 'none' }}>
-                  
-                  <summary>View SQL Query</summary>
-                  <code>{msg.sql}</code>
-                </details>
-              )}
-            </div>
-          </div>
-        ))}
-        {loading && (
-          <div className="message bot">
-            <div className="message-content">
-              <p>🔄 Processing your question...</p>
-            </div>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
-
-      <form onSubmit={sendMessage} className="input-form">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask a question about your orders..."
-          disabled={loading}
-        />
-        <button type="submit" disabled={loading}>
-          Send
-        </button>
-      </form>
+      <ChatHeader />
+      <ChatMessages
+        messages={messages}
+        loading={loading}
+        messagesEndRef={messagesEndRef}
+      />
+      <ChatInputForm
+        input={input}
+        loading={loading}
+        onInputChange={(e) => setInput(e.target.value)}
+        onSubmit={sendMessage}
+      />
     </div>
   );
 };

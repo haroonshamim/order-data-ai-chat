@@ -1,6 +1,8 @@
 // Database schema definitions
 // This file contains the structure and metadata for all database tables
 
+//Contains a dictionary of orders having value of array of column definitions. Each column definition includes the name, data type, and a brief description of the column's purpose. This schema serves as a reference for how data is organized in the database and can be used for validation, query construction, and documentation purposes.
+
 const DB_SCHEMA = {
   orders: {
     columns: [
@@ -17,4 +19,5 @@ const DB_SCHEMA = {
   }
 };
 
+//module.exports = “what this file shares with the rest of the app”
 module.exports = { DB_SCHEMA };

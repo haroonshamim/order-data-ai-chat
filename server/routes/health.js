@@ -3,6 +3,10 @@ const router = express.Router();
 const { supabase } = require('../config/clients');
 
 // Test database connection
+//that route is not active by itself yet. It becomes active only when the router is mounted into the main app, like in server.js:
+
+//That means the '/' becomes /api/health.
+
 router.get('/', async (req, res) => {
   try {
     // We only need count
