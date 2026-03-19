@@ -2,7 +2,8 @@
 .env
 .env.local
 .env.*.local
-
+.env.railway
+.env.railway.local
 # Dependencies
 node_modules/
 npm-debug.log
