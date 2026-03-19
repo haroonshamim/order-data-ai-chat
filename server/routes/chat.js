@@ -3,6 +3,12 @@ const router = express.Router();
 const util = require('util');
 const { turso, groq } = require('../config/clients');
 
+// Set timeout for this route (30 seconds)
+router.use((req, res, next) => {
+  req.setTimeout(120000); // 120 seconds for chat endpoint
+  next();
+});
+
 // #region Tool Definitions
 
 const AVAILABLE_TOOLS = [
@@ -43,25 +49,26 @@ function validateSQL(sql) {
 }
 
 // Execute SQL query against Turso.
-// This keeps SQL execution isolated from route logic.
 async function executeSQL(sql) {
   try {
     validateSQL(sql);
     const cleanedSQL = sql.replace(/;+$/, '').trim();
 
-    console.log('Executing SQL:', cleanedSQL);
+    console.log('[SQL] Executing:', cleanedSQL);
 
     const result = await turso.execute(cleanedSQL);
 
+    console.log('[SQL] Success. Rows:', result.rows?.length || 0);
     return result.rows || [];
   } catch (err) {
-    console.error('SQL Execution Error:', err);
+    console.error('[SQL] Execution Error:', err.message);
     throw err;
   }
 }
 
 // Tool execution handler
 async function processTool(toolName, toolInput) {
+  console.log('[Tool] Processing:', toolName);
   if (toolName === "execute_sql_query") {
     return await executeSQL(toolInput.query);
   }
@@ -84,7 +91,7 @@ KEY RULES:
 6. Format your response clearly with the results`;
 }
 
-// Build client-facing errors based on error type.
+// Build client-facing errors
 function buildClientError(error) {
   const message = String(error?.message || 'Unexpected server error').toLowerCase();
 
@@ -109,28 +116,35 @@ function buildClientError(error) {
     };
   }
 
+  if (message.includes('timeout') || message.includes('econnrefused')) {
+    return {
+      error: 'Server timeout. Please try again.',
+      code: 'TIMEOUT'
+    };
+  }
+
   return {
     error: 'Invalid Request or server error. Please check your question and try again.',
     code: 'CHAT_REQUEST_FAILED',
   };
 }
 
-// Log full server-side error details for debugging.
+// Log full error details
 function logFullError(prefix, error) {
-  console.error(prefix);
+  console.error(`[ERROR] ${prefix}`);
   console.error('Message:', error?.message);
+  console.error('Code:', error?.code);
   if (error?.stack) {
     console.error('Stack:', error.stack);
   }
-  console.error('Details:', util.inspect(error, { depth: null, colors: false }));
 }
 
-// Return full error details when debugging is enabled.
+// Return error details for client
 function getErrorDetailsForClient(error) {
   return {
     message: error?.message || 'Unknown error',
+    code: error?.code || 'UNKNOWN',
     stack: error?.stack || null,
-    full: util.inspect(error, { depth: null, colors: false }),
   };
 }
 
@@ -138,22 +152,18 @@ function getErrorDetailsForClient(error) {
 
 // #region Chat Route
 
-/*
-GET vs POST endpoints:
-- GET retrieves data/status and should be idempotent.
-- POST sends input data and may trigger processing.
-
-app.post("/api/chat", ...): sends user input for processing.
-*/
 router.post('/', async (req, res) => {
+  const startTime = Date.now();
+  
   try {
     const { message } = req.body;
 
     if (!message?.trim()) {
+      console.log('[Chat] Empty message received');
       return res.status(400).json({ error: 'Message required' });
     }
 
-    console.log('User Question:', message);
+    console.log('[Chat] User question:', message);
 
     const systemPrompt = buildSystemPrompt();
 
@@ -163,6 +173,7 @@ router.post('/', async (req, res) => {
     ];
 
     // Call Groq with tools
+    console.log('[Groq] Calling API...');
     let response = await groq.chat.completions.create({
       model: process.env.GROQ_MODEL || 'mixtral-8x7b-32768',
       messages: messages,
@@ -170,12 +181,21 @@ router.post('/', async (req, res) => {
       tool_choice: "auto",
       max_tokens: 2048
     });
+    console.log('[Groq] Response received');
 
     let sqlQuery = null;
     let queryResults = null;
+    let toolIterations = 0;
 
     // Handle tool calls
     while (response.choices[0].message.tool_calls) {
+      toolIterations++;
+      console.log(`[Tool] Iteration ${toolIterations}`);
+      
+      if (toolIterations > 5) {
+        throw new Error('Too many tool iterations');
+      }
+
       const toolCalls = response.choices[0].message.tool_calls;
 
       messages.push({
@@ -191,7 +211,7 @@ router.post('/', async (req, res) => {
           const toolName = toolCall.function.name;
           const toolInput = JSON.parse(toolCall.function.arguments);
 
-          console.log(`Executing: ${toolName}`, toolInput);
+          console.log(`[Tool] Executing: ${toolName}`);
 
           const result = await processTool(toolName, toolInput);
 
@@ -207,9 +227,9 @@ router.post('/', async (req, res) => {
             content: JSON.stringify(result)
           });
 
-          console.log('Tool result:', result);
+          console.log(`[Tool] ${toolName} completed`);
         } catch (toolError) {
-          console.error(`Tool error:`, toolError);
+          console.error(`[Tool] Error in ${toolCall.function.name}:`, toolError.message);
           toolResults.push({
             tool_call_id: toolCall.id,
             role: "tool",
@@ -222,16 +242,21 @@ router.post('/', async (req, res) => {
       messages.push(...toolResults);
 
       // Get next response from Groq
+      console.log('[Groq] Calling API for next response...');
       response = await groq.chat.completions.create({
         model: process.env.GROQ_MODEL || 'mixtral-8x7b-32768',
         messages: messages,
         tools: AVAILABLE_TOOLS,
         max_tokens: 2048
       });
+      console.log('[Groq] Response received');
     }
 
-    // Only use the FINAL response (after while loop ends)
+    // Final response
     const finalResponse = response.choices[0].message.content || '';
+
+    const duration = Date.now() - startTime;
+    console.log(`[Chat] Complete! Duration: ${duration}ms, Iterations: ${toolIterations}`);
 
     res.json({
       question: message,
@@ -241,10 +266,11 @@ router.post('/', async (req, res) => {
     });
 
   } catch (error) {
-    logFullError('Chat error:', error);
+    const duration = Date.now() - startTime;
+    logFullError(`Chat error (${duration}ms):`, error);
     const clientError = buildClientError(error);
 
-    res.status(400).json({
+    res.status(500).json({
       ...clientError,
       ...(process.env.DEBUG_ERRORS === 'true' && { details: getErrorDetailsForClient(error) })
     });

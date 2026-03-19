@@ -4,6 +4,7 @@
 .env.*.local
 .env.railway
 .env.railway.local
+.env.production
 # Dependencies
 node_modules/
 npm-debug.log
