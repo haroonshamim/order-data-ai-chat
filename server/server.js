@@ -2,10 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
-
-dotenv.config();
-
-console.log('🚀 Server Starting...');
+console.log('Server Starting...');
 console.log('NODE_ENV:', process.env.NODE_ENV);
 console.log('CLIENT_URL:', process.env.CLIENT_URL);
 
@@ -74,16 +71,31 @@ try {
   app.use('/api/orders', require('./routes/orders'));
   app.use('/api/chat', require('./routes/chat'));
   app.use('/api/test', require('./routes/testroute'));
-  console.log('✅ Routes loaded successfully');
+  console.log('Routes loaded successfully');
 } catch (error) {
-  console.error('❌ Error loading routes:', error.message);
+  console.error('Error loading routes:', error.message);
   process.exit(1);
 }
 
+/*
+
+You only need these lines when you want your backend (Express) to serve the frontend (React build) from the same server/hosting.
+
+If your frontend is deployed separately (e.g., on Vercel, Netlify, or another static host), those services serve the React build, and your backend only handles API requests.
+In that case, you do NOT need these lines in your backend code.
+Summary:
+
+Same hosting (full-stack on one server): You need these lines.
+Separate hosting (frontend and backend on different servers): You do not need these lines in the backend.
+
+*/
 // Serve frontend in production
 if (process.env.NODE_ENV === 'production') {
   const buildPath = path.join(__dirname, '../client/build');
-  app.use(express.static(buildPath));
+  
+  const StaticFilesMiddleware=express.static(buildPath);
+  //It will now server the static files from the build directory when requests are made to the root URL ("/").
+  app.use(StaticFilesMiddleware);
   
   app.get(/.*/, (req, res) => {
     res.sendFile(path.join(buildPath, 'index.html'));

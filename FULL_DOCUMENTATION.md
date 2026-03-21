@@ -154,3 +154,16 @@ Frontend (`client/.env.development`):
 - Shared external clients are centralized in `server/config/clients.js`.
 - If model names are deprecated on Groq, update `GROQ_MODEL`.
 
+
+
+## Front End Flow
+
+  In a React project, the application starts by loading the index.html file in the public folder. This file is the entry point for the web browser, but it only contains a root div where the React app will be rendered.
+
+  The actual React code execution begins in src/index.js. This file renders the App component (from App.js) into the root div in index.html using ReactDOM. So, the browser loads index.html, and then index.js mounts App.js into it.
+
+  Summary:
+
+  index.html is loaded first by the browser.
+  src/index.js is the JavaScript entry point.
+  App.js is the main React component rendered by index.js.

@@ -6,3 +6,4 @@ export const INITIAL_BOT_MESSAGE = {
   type: 'bot',
   text: 'Hi! 👋 I can help you analyze your order data. Ask me questions like:\n• "What was the total revenue in January?"\n• "Which product sold the most?"\n• "Show me the top 3 customers by total spend"',
 };
+

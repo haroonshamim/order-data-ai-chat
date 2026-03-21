@@ -1,7 +1,6 @@
 //Importing Libraries and Styles      
 import React, { useState, useRef, useEffect } from 'react';
-//This library is used to make HTTP requests from the frontend to the backend API. 
-//It simplifies the process of sending asynchronous requests and handling responses, making it easier to communicate with the server and retrieve data or send user input for processing.
+//This library is used to make HTTP requests from the frontend to the backend API.  It simplifies the process of sending asynchronous requests and handling responses, making it easier to communicate with the server and retrieve data or send user input for processing.
 import axios from 'axios';
 import ChatHeader from './ChatHeader';
 import ChatMessages from './ChatMessages';
@@ -14,22 +13,11 @@ const API_BASE = process.env.REACT_APP_API_URL;
 console.log('[ChatInterface] API URL:', API_BASE, 'NODE_ENV:', process.env.NODE_ENV);
 
 
-/*
-React Component This component represents the chat interface of the application. It manages the state of messages, user input, and loading status. It also handles sending messages to the backend API and displaying responses from the AI model.
-const ChatInterface = () => {
-  // 1. STATE — variables that store data
-  // 2. REFS — references to DOM elements
-  // 3. FUNCTIONS — logic and actions
-  // 4. EFFECTS — code that runs when something changes
-  // 5. RETURN — the actual UI (JSX)
-} 
-
-  //Use State: useState() returns two values: [stateVariable, functionToUpdateState] 
-  //Messages State (Variable): This state variable holds an array of message objects, where each object represents a message in the chat.   Each message has a type (either 'bot' or 'user') and the text content of the message. The initial state contains a welcome message from the bot. MESSAGE Is An Object = [{type:'bot', text:'...'}] 
-  // const [value, setValue] = useState(initialValue) value — the current stored value setValue — the function to update it initialValue — what it starts as (runs only once) Simple example: jsconst [count, setCount] = useState(0) // Later... setCount(5) // count is now 5, component re-renders */
-
+//1 Comment
 const ChatInterface=()=>{ 
-  const [messages,setMessages]=useState(
+
+//2 Comment
+const [messages,setMessages]=useState(
     
     //This is initial Data for the chat interface, which contains a welcome message from the bot.
     [INITIAL_BOT_MESSAGE]);
@@ -39,8 +27,8 @@ const ChatInterface=()=>{
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
 
-  //useRef creates a reference to a DOM element — essentially a way to directly point to an HTML element on the page.
-  //useRef(null) — starts as null because the element doesn't exist yet when the component first loads. Once the component renders, React fills it in automatically.
+//3 Comment
+
   const messagesEndRef = useRef(null);
 
   //A function//Component that scrolls the chat to the bottom whenever a new message is added. It uses the reference created by useRef to access the DOM element and scroll it into view smoothly.
@@ -52,6 +40,7 @@ const ChatInterface=()=>{
 
 
   //useEffect is a React Hook that runs side effects — code that needs to execute after something happens in your component.Every time messages changes, it runs scrollToBottom()
+  //2nd paramter tells whenever messages change. ucall useeffect
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
@@ -159,3 +148,24 @@ const ChatInterface=()=>{
 };
 
 export default ChatInterface;
+/*
+Notes
+-------------------------1------------------------
+  REACT COMPONENT FLOW:
+                This component represents the chat interface of the application. It manages the state of messages, user input, and loading status. It also handles sending messages to the backend API and displaying responses from the AI model.
+                const ChatInterface = () => {
+                  // 1. STATE — variables that store data
+                  // 2. REFS — references to DOM elements
+                  // 3. FUNCTIONS — logic and actions
+                  // 4. EFFECTS — code that runs when something changes
+                  // 5. RETURN — the actual UI (JSX)
+                } 
+-------------------------2------------------------
+  //Use State: useState() returns two values: [stateVariable, functionToUpdateState] 
+  //Messages State (Variable): This state variable holds an array of message objects, where each object represents a message in the chat.   Each message has a type (either 'bot' or 'user') and the text content of the message. The initial state contains a welcome message from the bot. MESSAGE Is An Object = [{type:'bot', text:'...'}] 
+  // const [value, setValue] = useState(initialValue) value — the current stored value setValue — the function to update it initialValue — what it starts as (runs only once) Simple example: jsconst [count, setCount] = useState(0) // Later... setCount(5) // count is now 5, component re-renders 
+-------------------------3------------------------
+  //useRef creates a reference to a DOM element — essentially a way to directly point to an HTML element on the page.
+  //useRef(null) — starts as null because the element doesn't exist yet when the component first loads. Once the component renders, React fills it in automatically.
+
+*/
