@@ -1,3 +1,5 @@
+****DEPLOYED LINK:https://order-data-ai-chat-production-e929.up.railway.app/****
+
 # Order Data AI Chat
 
 ## Required Steps to Run
