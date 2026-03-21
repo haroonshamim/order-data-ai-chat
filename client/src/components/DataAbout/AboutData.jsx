@@ -1,64 +1,121 @@
-import React,{useEffect,useState} from "react";
+import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import axios from "axios";
 
 //First We declare a React functional component called AboutData. 
 const API_URL= process.env.REACT_APP_API_DATA;
-const AboutData=()=>{ 
-      //Declaring Data
-      const [Data, setData] = useState([]);
-      const [loading,setloading]=useState(true);
+console.log('[AboutData] API URL:', API_URL, 'NODE_ENV:', process.env.NODE_ENV);
 
-      //We are using fetch to get data from the API_URL and then we set the Data state with the response data. If there is an error, we log it to the console. Finally, we set loading to false in both cases to indicate that the data fetching process is complete.
-  const fetchData = () => {
-  axios.get(API_URL)
-    .then((response)=>{
-        setData(response.data);
-        setloading(false);
-    })
-    .catch((error)=>{
-        console.error('Error fetching data:', error);
-        setloading(false);
-    });
+
+
+
+// TableComponent moved out for clarity
+const TableComponent = ({ columns, Data }) => {
+  const styles = {
+    container: {
+      fontFamily: 'Segoe UI, Tahoma, Geneva, Verdana, sans-serif',
+      padding: '20px',
+      color: '#333',
+    },
+    title: {
+      borderBottom: '2px solid #f4f4f4',
+      paddingBottom: '10px',
+      marginBottom: '20px',
+    },
+    table: {
+      width: '100%',
+      borderCollapse: 'collapse',
+      borderRadius: '8px',
+      overflow: 'hidden',
+      boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+    },
+    thead: {
+      backgroundColor: '#007bff',
+      color: '#ffffff',
+      textAlign: 'left',
+    },
+    th: {
+      padding: '12px 15px',
+      fontWeight: '600',
+      textTransform: 'uppercase',
+      fontSize: '0.85rem',
+      letterSpacing: '0.05em',
+    },
+    td: {
+      padding: '12px 15px',
+      borderBottom: '1px solid #dddddd',
+    },
+    row: {
+      transition: 'background-color 0.2s ease',
+    }
   };
-  
+  return (
+    <div style={styles.container}>
+      <h1 style={styles.title}>About Data</h1>
+      <table style={styles.table}>
+        <thead style={styles.thead}>
+          <tr>
+            {columns.map((col) => (
+              <th key={col} style={styles.th}>{col}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Data.map((row, index) => (
+            <tr
+              key={index}
+              style={{
+                ...styles.row,
+                backgroundColor: index % 2 === 0 ? '#ffffff' : '#f9f9f9',
+              }}
+            >
+              {columns.map((col) => (
+                <td key={col} style={styles.td}>{row[col]}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
 
-    /*
-        Here, the empty array [] means the effect will run only once, when the component mounts. If you put variables inside the array, the effect will re-run whenever those variables change. So:
-        
-        [] (empty): run once on mount.
-        [someVar]: run on mount and whenever someVar changes.
-        This helps control when your side effects (like fetching data) should happen.
+const AboutData = () => {
+  const [Data, setData] = useState([]);
+  const [loading, setloading] = useState(true);
+  const navigate = useNavigate();
 
-    */
-    useEffect(()=>{
-        fetchData();
-    }, []);
+  useEffect(() => {
+    axios.get(API_URL)
+      .then((response) => {
+        if (Array.isArray(response.data.orders)) {
+          setData(response.data.orders);
+        } else {
+          setData([]);
+        }
+        setloading(false);
+      })
+      .catch((error) => {
+        setloading(false);
+      });
+  }, []);
 
   if (loading) return <div>Loading...</div>;
   if (!Data.length) return <div>No data found.</div>;
-    const columns = Data[0] ? Object.keys(Data[0]) : [];
-    return(
-            <div>
-                <h1>About Data</h1>
-                <table border="1" cellPadding="8">
-                    <thead>
-                        {columns.map((col) => (
-                            <th key={col}>{col}</th>
-                        ))}
-                    </thead>
-                    <tbody>
-                        {Data.map((row, index) => (
-                            <tr key={index}>
-                                {columns.map((col) => (
-                                    <td key={col}>{row[col]}</td>
-                                ))}
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>              
-            </div>
+  const columns = Data[0] ? Object.keys(Data[0]) : [];
+  return (
+    <div>
+      <button
+        onClick={() => navigate(-1)}
+       style={{ marginBottom: 24, padding: '6px 16px', background: '#1976d2', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '14px' }}
+      >
+        ← Back
+      </button>
+      <TableComponent columns={columns} Data={Data} />
+    </div>
   );
-}
+};
+
 export default AboutData;
 
 /*

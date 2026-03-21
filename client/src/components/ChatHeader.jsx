@@ -8,7 +8,22 @@ const ChatHeader = () => {
     <div className="chat-header">
       <h1>{CHAT_HEADER_TITLE}</h1>
       <p>{CHAT_HEADER_SUBTITLE}</p>
-      <Link to="/about-data">Click Here to see About Data</Link>
+      <Link
+        to="/about-data"
+        style={{
+          display: 'inline-block',
+          marginTop: 18,
+          padding: '12px 25px',
+          background: '#ffcf32',
+          color: '#fff',
+          borderRadius: 50,
+          fontWeight: 600,
+          textDecoration: 'none',
+          color: '#000000',
+        }}
+      >
+        See About Data
+      </Link>
     </div>
   );
 };

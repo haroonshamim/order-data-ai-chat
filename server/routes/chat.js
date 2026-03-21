@@ -16,13 +16,13 @@ const AVAILABLE_TOOLS = [
     type: "function",
     function: {
       name: "execute_sql_query",
-      description: "Execute a SELECT SQL query to fetch order data from the database",
+      description: "Mandatory: Use this to fetch data whenever the user asks about sales, orders, or customers. Input must be a valid SQLite SELECT statement.",
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "The SQL SELECT query to execute"
+            description: "The SQL SELECT query. Example: SELECT * FROM orders WHERE city = 'Karachi';"
           }
         },
         required: ["query"]
@@ -76,19 +76,23 @@ async function processTool(toolName, toolInput) {
 }
 
 function buildSystemPrompt() {
-  return `You are a helpful assistant that analyzes order data from a database.
-
+  return `You are a strict SQL Expert for an Order Management System.
+  
 DATABASE SCHEMA:
 - Table: orders
-- Columns: order_id, customer_name, product, quantity, unit_price, total, order_date, city, status
+- Columns: order_id (int), customer_name (text), product (text), quantity (int), unit_price (int), total (int), order_date (ISO string), city (text), status (text)
 
-KEY RULES:
-1. Use the execute_sql_query tool to query the database
-2. The 'total' column contains revenue/sales amount
-3. Use strftime('%m', order_date) = '01' for January (SQLite syntax)
-4. Only use SELECT queries
-5. Use SQLite-compatible SQL syntax
-6. Format your response clearly with the results`;
+DATA SAMPLES & FORMATTING:
+- Cities are capitalized: 'Karachi', 'Lahore', 'Islamabad'.
+- Dates follow 'YYYY-MM-DD' format.
+- Example row: {"order_id":1001, "customer_name":"Ahmed Supplies", "product":"Widget Pro", "total":60000, "order_date":"2025-01-05", "city":"Karachi", "status":"completed"}
+
+STRICT QUERY RULES:
+1. REVENUE: Always use SUM(total) for revenue/sales questions.
+2. DATE FILTER: Use strftime('%m', order_date) = '01' for January, '02' for February, etc.
+3. CASE INSENSITIVITY: Use the LIKE operator for names if the user provides lowercase input (e.g., customer_name LIKE 'ahmed%').
+4. LIMITS: If the user asks for "top" or "best," always use ORDER BY ... DESC LIMIT 5.
+5. NO CHAT: Before the tool call, do not explain what you are doing. Just call the tool.`;
 }
 
 // Build client-facing errors
@@ -175,11 +179,12 @@ router.post('/', async (req, res) => {
     // Call Groq with tools
     console.log('[Groq] Calling API...');
     let response = await groq.chat.completions.create({
-      model: process.env.GROQ_MODEL || 'mixtral-8x7b-32768',
+      model: process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
       messages: messages,
       tools: AVAILABLE_TOOLS,
       tool_choice: "auto",
-      max_tokens: 2048
+      max_tokens: 2048,
+      temperature: 0
     });
     console.log('[Groq] Response received');
 
