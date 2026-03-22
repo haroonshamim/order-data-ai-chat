@@ -133,3 +133,27 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+/* About link/button in header */
+.about-link {
+  display: inline-block;
+  margin-top: 18px;
+  padding: 12px 25px;
+  background: linear-gradient(180deg, #ffd54f 0%, #ffcf32 100%);
+  color: #000000;
+  border-radius: 50px;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 6px 18px rgba(255, 207, 71, 0.18);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.about-link:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(255, 207, 71, 0.22);
+}
+
+.about-link:focus-visible {
+  outline: 3px solid rgba(255, 193, 7, 0.18);
+  outline-offset: 3px;
+}

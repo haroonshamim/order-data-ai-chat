@@ -1,5 +1,5 @@
 import React from 'react';
-import { CHAT_LOADING_TEXT } from '../constants/chatConstants';
+import { CHAT_LOADING_TEXT } from '../../constants/chatConstants';
 
 const ChatMessages = ({ messages, loading, messagesEndRef }) => {
   return (

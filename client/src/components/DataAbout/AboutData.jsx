@@ -1,90 +1,19 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import './AboutData.css';
 
 //First We declare a React functional component called AboutData. 
 const API_URL= process.env.REACT_APP_API_DATA;
 console.log('[AboutData] API URL:', API_URL, 'NODE_ENV:', process.env.NODE_ENV);
 
-
-
-
-// TableComponent moved out for clarity
-const TableComponent = ({ columns, Data }) => {
-  const styles = {
-    container: {
-      fontFamily: 'Segoe UI, Tahoma, Geneva, Verdana, sans-serif',
-      padding: '20px',
-      color: '#333',
-    },
-    title: {
-      borderBottom: '2px solid #f4f4f4',
-      paddingBottom: '10px',
-      marginBottom: '20px',
-    },
-    table: {
-      width: '100%',
-      borderCollapse: 'collapse',
-      borderRadius: '8px',
-      overflow: 'hidden',
-      boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-    },
-    thead: {
-      backgroundColor: '#007bff',
-      color: '#ffffff',
-      textAlign: 'left',
-    },
-    th: {
-      padding: '12px 15px',
-      fontWeight: '600',
-      textTransform: 'uppercase',
-      fontSize: '0.85rem',
-      letterSpacing: '0.05em',
-    },
-    td: {
-      padding: '12px 15px',
-      borderBottom: '1px solid #dddddd',
-    },
-    row: {
-      transition: 'background-color 0.2s ease',
-    }
-  };
-  return (
-    <div style={styles.container}>
-      <h1 style={styles.title}>About Data</h1>
-      <table style={styles.table}>
-        <thead style={styles.thead}>
-          <tr>
-            {columns.map((col) => (
-              <th key={col} style={styles.th}>{col}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {Data.map((row, index) => (
-            <tr
-              key={index}
-              style={{
-                ...styles.row,
-                backgroundColor: index % 2 === 0 ? '#ffffff' : '#f9f9f9',
-              }}
-            >
-              {columns.map((col) => (
-                <td key={col} style={styles.td}>{row[col]}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-};
-
 const AboutData = () => {
   const [Data, setData] = useState([]);
   const [loading, setloading] = useState(true);
+  //This will be used to navigate back to the main page when the user clicks the back button. useNavigate is a hook provided by react-router-dom that allows us to programmatically navigate to different routes in our application. In this case, we will use it to go back to the previous page when the user clicks the back button.
   const navigate = useNavigate();
 
+  //I have added this into Useeffect so that it will only run once when the component is mounted. If I put it outside of useEffect, it will run on every render, which will cause an infinite loop because setData and setloading will trigger a re-render, which will call fetchData again, and so on.
   useEffect(() => {
     axios.get(API_URL)
       .then((response) => {
@@ -98,20 +27,41 @@ const AboutData = () => {
       .catch((error) => {
         setloading(false);
       });
-  }, []);
+  }, []);//No Dependency. The empty dependency array [] means this effect will only run once when the component mounts, preventing infinite loops.
 
-  if (loading) return <div>Loading...</div>;
+  if (loading) return <div className="chat-header"><h1 className="loading-text">Loading...</h1></div>;
   if (!Data.length) return <div>No data found.</div>;
   const columns = Data[0] ? Object.keys(Data[0]) : [];
   return (
     <div>
-      <button
-        onClick={() => navigate(-1)}
-       style={{ marginBottom: 24, padding: '6px 16px', background: '#1976d2', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '14px' }}
-      >
-        ← Back
-      </button>
+      <button onClick={() => navigate('/')} className="about-link">← Back</button>
       <TableComponent columns={columns} Data={Data} />
+    </div>
+  );
+};
+// TableComponent moved out for clarity
+const TableComponent = ({ columns, Data }) => {
+  return (
+    <div className="about-container">
+      <h1 className="about-title">About Data</h1>
+      <table className="about-table">
+        <thead className="about-thead">
+          <tr>
+            {columns.map((col) => (
+              <th key={col} className="about-th">{col}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Data.map((row, index) => (
+            <tr key={index} className="about-row">
+              {columns.map((col) => (
+                <td key={col} className="about-td">{row[col]}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 };
