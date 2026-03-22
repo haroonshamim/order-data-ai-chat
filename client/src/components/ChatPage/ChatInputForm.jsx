@@ -1,5 +1,5 @@
 import React from 'react';
-import { CHAT_INPUT_PLACEHOLDER } from '../constants/chatConstants';
+import { CHAT_INPUT_PLACEHOLDER } from '../../constants/chatConstants';
 
 /*
 The Props (Parameters)

@@ -90,12 +90,26 @@ Separate hosting (frontend and backend on different servers): You do not need th
 
 */
 // Serve frontend in production
+
+/*
+
+The build folder is the production-ready output generated when you run:
+bashnpm run build
+This command creates a build directory in your client folder, containing the optimized static files (HTML, CSS, JS) for deployment.
+It contains your entire React app compiled, minified, and optimized for deployment — not for development.
+The lines of code in the server.js file that serve the frontend are necessary if you want your Express backend to also serve the React frontend from the same server. This is common in full-stack applications where both the frontend and backend are hosted together.
+In a MERN app, your Express server typically serves the build folder in production:
+
+*/
+
+
 if (process.env.NODE_ENV === 'production') {
   const buildPath = path.join(__dirname, '../client/build');
   
   const StaticFilesMiddleware=express.static(buildPath);
   //It will now server the static files from the build directory when requests are made to the root URL ("/").
   app.use(StaticFilesMiddleware);
+  
   
   app.get(/.*/, (req, res) => {
     res.sendFile(path.join(buildPath, 'index.html'));
