@@ -179,12 +179,21 @@ function getErrorDetailsForClient(error) {
 // #endregion
 
 // #region Chat Route
-
+function sanitizeMessage(raw) {
+  return raw
+    .trim()
+    .replace(/^[\u2022"'\-*>\s]+/, '')   // leading bullets (•), quotes, dashes
+    .replace(/[\u2022"'\-*>\s]+$/, '')   // trailing same
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 router.post('/', async (req, res) => {
   const startTime = Date.now();
 
   try {
-    const { message } = req.body;
+    const { message: rawMessage } = req.body;
+    const message = sanitizeMessage(rawMessage);
+    console.log("[Chat] Received question: " + message);
 
     if (!message?.trim()) {
       return res.status(400).json({ error: 'Message required' });
