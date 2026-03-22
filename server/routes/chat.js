@@ -76,25 +76,49 @@ async function processTool(toolName, toolInput) {
 }
 
 function buildSystemPrompt() {
-  return `You are a strict SQL Expert for an Order Management System.
-  
-DATABASE SCHEMA:
-- Table: orders
-- Columns: order_id (int), customer_name (text), product (text), quantity (int), unit_price (int), total (int), order_date (ISO string), city (text), status (text)
+  return `You are a SQL analyst for an Order Management System. Your job:
+1. Call execute_sql_query ONCE with the correct SQL
+2. Read the tool result
+3. Answer in ONE clean sentence or a short list — nothing else
 
-DATA SAMPLES & FORMATTING:
-- Cities are capitalized: 'Karachi', 'Lahore', 'Islamabad'.
-- Dates follow 'YYYY-MM-DD' format.
-- Example row: {"order_id":1001, "customer_name":"Ahmed Supplies", "product":"Widget Pro", "total":60000, "order_date":"2025-01-05", "city":"Karachi", "status":"completed"}
+## DATABASE SCHEMA
+Table: \`orders\`
+| Column        | Type    | Notes                              |
+|---------------|---------|------------------------------------|
+| order_id      | INTEGER | Primary key                        |
+| customer_name | TEXT    | e.g. "Ahmed Supplies"              |
+| product       | TEXT    | e.g. "Widget Pro"                  |
+| quantity      | INTEGER |                                    |
+| unit_price    | INTEGER |                                    |
+| total         | INTEGER | Precomputed: quantity × unit_price |
+| order_date    | TEXT    | ISO format: YYYY-MM-DD             |
+| city          | TEXT    | e.g. "Karachi", "Lahore"           |
+| status        | TEXT    | e.g. "completed", "pending"        |
 
-STRICT QUERY RULES:
-1. REVENUE: Always use SUM(total) for revenue/sales questions.
-2. DATE FILTER: Use strftime('%m', order_date) = '01' for January, '02' for February, etc.
-3. CASE INSENSITIVITY: Use the LIKE operator for names if the user provides lowercase input (e.g., customer_name LIKE 'ahmed%').
-4. LIMITS: If the user asks for "top" or "best," always use ORDER BY ... DESC LIMIT 5.
-5. NO CHAT: Before the tool call, do not explain what you are doing. Just call the tool.`;
+## QUERY RULES
+- Revenue/sales → SUM(total), never SUM(quantity)
+- Month filter → strftime('%m', order_date) = '01'
+- Year filter  → strftime('%Y', order_date) = '2025'
+- Range filter → order_date BETWEEN '2025-01-01' AND '2025-03-31'
+- Names/cities → use LIKE for case-insensitive: customer_name LIKE '%ahmed%'
+- Top N        → GROUP BY → ORDER BY metric DESC → LIMIT N (default 5)
+- Status values are lowercase: 'completed', 'pending', 'cancelled'
+- Always alias aggregates: SUM(total) AS total_revenue
+
+## RESPONSE RULES — READ CAREFULLY
+- NEVER show raw JSON like [{"product":"Widget Pro"}]
+- NEVER say "the results show" or "it appears that"
+- NEVER explain what the tool returned or repeat it back
+- NEVER mention tool calls, iterations, or intermediate steps
+- Answer like a human analyst would in a Slack message
+
+GOOD: "Widget Pro sold the most with 320 units across 14 orders."
+BAD:  "The final answer is [{"product":"Widget Pro"}]."
+BAD:  "It appears the results show Widget Pro as the top product."
+
+If results are empty: "No data found for that query."
+If question is unclear: ask one short clarifying question.`;
 }
-
 // Build client-facing errors
 function buildClientError(error) {
   const message = String(error?.message || 'Unexpected server error').toLowerCase();
@@ -158,126 +182,121 @@ function getErrorDetailsForClient(error) {
 
 router.post('/', async (req, res) => {
   const startTime = Date.now();
-  
+
   try {
     const { message } = req.body;
 
     if (!message?.trim()) {
-      console.log('[Chat] Empty message received');
       return res.status(400).json({ error: 'Message required' });
     }
 
     console.log('[Chat] User question:', message);
 
-    const systemPrompt = buildSystemPrompt();
+    const MODEL = process.env.GROQ_MODEL || 'llama3-groq-70b-8192-tool-use-preview';
+    const MAX_ITERATIONS = 3;
 
     const messages = [
-      { role: "system", content: systemPrompt },
+      { role: "system", content: buildSystemPrompt() },
       { role: "user", content: message }
     ];
-
-    // Call Groq with tools
-    console.log('[Groq] Calling API...');
-    let response = await groq.chat.completions.create({
-      model: process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
-      messages: messages,
-      tools: AVAILABLE_TOOLS,
-      tool_choice: "auto",
-      max_tokens: 2048,
-      temperature: 0
-    });
-    console.log('[Groq] Response received');
 
     let sqlQuery = null;
     let queryResults = null;
     let toolIterations = 0;
+    let response;
 
-    // Handle tool calls
-    while (response.choices[0].message.tool_calls) {
+    // ── Step 1: First call — force a tool call, don't let model ramble ──
+    response = await groq.chat.completions.create({
+      model: MODEL,
+      messages,
+      tools: AVAILABLE_TOOLS,
+      tool_choice: "required",   // must call a tool on first turn
+      max_tokens: 512,           // tool call JSON is small, no need for 2048
+      temperature: 0
+    });
+
+    // ── Step 2: Agentic loop ──
+    while (response.choices[0].message.tool_calls?.length) {
       toolIterations++;
       console.log(`[Tool] Iteration ${toolIterations}`);
-      
-      if (toolIterations > 5) {
-        throw new Error('Too many tool iterations');
+
+      if (toolIterations > MAX_ITERATIONS) {
+        throw new Error(`Exceeded max tool iterations (${MAX_ITERATIONS})`);
       }
 
       const toolCalls = response.choices[0].message.tool_calls;
 
+      // Append assistant message with tool calls
       messages.push({
         role: "assistant",
-        content: response.choices[0].message.content || '',
+        content: response.choices[0].message.content ?? '',
         tool_calls: toolCalls
       });
 
-      const toolResults = [];
-
-      for (const toolCall of toolCalls) {
-        try {
+      // Execute every tool call in parallel
+      const toolResults = await Promise.all(
+        toolCalls.map(async (toolCall) => {
           const toolName = toolCall.function.name;
-          const toolInput = JSON.parse(toolCall.function.arguments);
+          let result;
 
-          console.log(`[Tool] Executing: ${toolName}`);
+          try {
+            const toolInput = JSON.parse(toolCall.function.arguments);
+            console.log(`[Tool] Executing: ${toolName}`, toolInput);
+            result = await processTool(toolName, toolInput);
 
-          const result = await processTool(toolName, toolInput);
-
-          if (toolName === "execute_sql_query") {
-            sqlQuery = toolInput.query;
-            queryResults = result;
+            if (toolName === "execute_sql_query") {
+              sqlQuery = toolInput.query;
+              queryResults = result;
+            }
+          } catch (err) {
+            console.error(`[Tool] Failed: ${toolName}`, err.message);
+            result = { error: err.message };
           }
 
-          toolResults.push({
-            tool_call_id: toolCall.id,
+          return {
             role: "tool",
+            tool_call_id: toolCall.id,
             name: toolName,
             content: JSON.stringify(result)
-          });
-
-          console.log(`[Tool] ${toolName} completed`);
-        } catch (toolError) {
-          console.error(`[Tool] Error in ${toolCall.function.name}:`, toolError.message);
-          toolResults.push({
-            tool_call_id: toolCall.id,
-            role: "tool",
-            name: toolCall.function.name,
-            content: JSON.stringify({ error: toolError.message })
-          });
-        }
-      }
+          };
+        })
+      );
 
       messages.push(...toolResults);
 
-      // Get next response from Groq
-      console.log('[Groq] Calling API for next response...');
+      // ── Step 3: Follow-up call — tool_choice "none" forces a text answer ──
       response = await groq.chat.completions.create({
-        model: process.env.GROQ_MODEL || 'mixtral-8x7b-32768',
-        messages: messages,
+        model: MODEL,
+        messages,
         tools: AVAILABLE_TOOLS,
-        max_tokens: 2048
+        tool_choice: "none",     // has the data now — just answer
+        max_tokens: 1024,
+        temperature: 0
       });
-      console.log('[Groq] Response received');
+
+      console.log('[Groq] Follow-up response received');
     }
 
-    // Final response
-    const finalResponse = response.choices[0].message.content || '';
-
+    const finalResponse = response.choices[0].message.content?.trim() || '';
     const duration = Date.now() - startTime;
-    console.log(`[Chat] Complete! Duration: ${duration}ms, Iterations: ${toolIterations}`);
+    console.log(`[Chat] Done in ${duration}ms | Iterations: ${toolIterations}`);
 
-    res.json({
+    return res.json({
       question: message,
-      sqlQuery: sqlQuery,
+      sqlQuery,
       results: queryResults,
       response: finalResponse
     });
 
   } catch (error) {
     const duration = Date.now() - startTime;
-    logFullError(`Chat error (${duration}ms):`, error);
-    const clientError = buildClientError(error);
+    logFullError(`[Chat] Error after ${duration}ms:`, error);
 
-    res.status(500).json({
-      ...clientError,
-      ...(process.env.DEBUG_ERRORS === 'true' && { details: getErrorDetailsForClient(error) })
+    return res.status(500).json({
+      ...buildClientError(error),
+      ...(process.env.DEBUG_ERRORS === 'true' && {
+        details: getErrorDetailsForClient(error)
+      })
     });
   }
 });
