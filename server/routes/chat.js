@@ -179,8 +179,8 @@ function getErrorDetailsForClient(error) {
 // #endregion
 
 // #region Chat Route
-function sanitizeMessage(raw) {
-  return raw
+function sanitizeMessage(raw = '') {
+  return String(raw ?? '')
     .trim()
     .replace(/^[\u2022"'\-*>\s]+/, '')   // leading bullets (•), quotes, dashes
     .replace(/[\u2022"'\-*>\s]+$/, '')   // trailing same
@@ -190,13 +190,28 @@ function sanitizeMessage(raw) {
 router.post('/', async (req, res) => {
   const startTime = Date.now();
 
-  try {
-    const { message: rawMessage } = req.body;
-    const message = sanitizeMessage(rawMessage);
-    console.log("[Chat] Received question: " + message);
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
 
-    if (!message?.trim()) {
-      return res.status(400).json({ error: 'Message required' });
+  const sendEvent = (event, data) => {
+    if (event) {
+      res.write(`event: ${event}\n`);
+    }
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    const { message: rawMessage } = req.body || {};
+    const message = sanitizeMessage(rawMessage);
+    console.log('[Chat] Received question:', message);
+
+    if (!message) {
+      sendEvent('error', { error: 'Message required', code: 'BAD_REQUEST' });
+      res.end();
+      return;
     }
 
     console.log('[Chat] User question:', message);
@@ -205,8 +220,8 @@ router.post('/', async (req, res) => {
     const MAX_ITERATIONS = 3;
 
     const messages = [
-      { role: "system", content: buildSystemPrompt() },
-      { role: "user", content: message }
+      { role: 'system', content: buildSystemPrompt() },
+      { role: 'user', content: message }
     ];
 
     let sqlQuery = null;
@@ -214,17 +229,17 @@ router.post('/', async (req, res) => {
     let toolIterations = 0;
     let response;
 
-    // ── Step 1: First call — force a tool call, don't let model ramble ──
+    sendEvent('start', { question: message });
+
     response = await groq.chat.completions.create({
       model: MODEL,
       messages,
       tools: AVAILABLE_TOOLS,
-      tool_choice: "required",   // must call a tool on first turn
-      max_tokens: 512,           // tool call JSON is small, no need for 2048
+      tool_choice: 'required',
+      max_tokens: 512,
       temperature: 0
     });
 
-    // ── Step 2: Agentic loop ──
     while (response.choices[0].message.tool_calls?.length) {
       toolIterations++;
       console.log(`[Tool] Iteration ${toolIterations}`);
@@ -235,14 +250,12 @@ router.post('/', async (req, res) => {
 
       const toolCalls = response.choices[0].message.tool_calls;
 
-      // Append assistant message with tool calls
       messages.push({
-        role: "assistant",
+        role: 'assistant',
         content: response.choices[0].message.content ?? '',
         tool_calls: toolCalls
       });
 
-      // Execute every tool call in parallel
       const toolResults = await Promise.all(
         toolCalls.map(async (toolCall) => {
           const toolName = toolCall.function.name;
@@ -253,7 +266,7 @@ router.post('/', async (req, res) => {
             console.log(`[Tool] Executing: ${toolName}`, toolInput);
             result = await processTool(toolName, toolInput);
 
-            if (toolName === "execute_sql_query") {
+            if (toolName === 'execute_sql_query') {
               sqlQuery = toolInput.query;
               queryResults = result;
             }
@@ -263,7 +276,7 @@ router.post('/', async (req, res) => {
           }
 
           return {
-            role: "tool",
+            role: 'tool',
             tool_call_id: toolCall.id,
             name: toolName,
             content: JSON.stringify(result)
@@ -272,41 +285,81 @@ router.post('/', async (req, res) => {
       );
 
       messages.push(...toolResults);
+      sendEvent('tool-result', {
+        iteration: toolIterations,
+        sqlQuery,
+        results: queryResults
+      });
 
-      // ── Step 3: Follow-up call — tool_choice "none" forces a text answer ──
-      response = await groq.chat.completions.create({
+      break;
+    }
+
+    let finalResponse = '';
+
+    try {
+      const stream = await groq.chat.completions.create({
         model: MODEL,
         messages,
         tools: AVAILABLE_TOOLS,
-        tool_choice: "none",     // has the data now — just answer
+        tool_choice: 'none',
+        max_tokens: 1024,
+        temperature: 0,
+        stream: true
+      });
+
+      for await (const chunk of stream) {
+        const token = chunk?.choices?.[0]?.delta?.content || '';
+
+        if (token) {
+          finalResponse += token;
+          sendEvent('token', { content: token });
+        }
+      }
+    } catch (streamError) {
+      console.warn('[Groq] Stream fallback:', streamError.message);
+
+      const fallbackResponse = await groq.chat.completions.create({
+        model: MODEL,
+        messages,
+        tools: AVAILABLE_TOOLS,
+        tool_choice: 'none',
         max_tokens: 1024,
         temperature: 0
       });
 
-      console.log('[Groq] Follow-up response received');
+      finalResponse = fallbackResponse?.choices?.[0]?.message?.content?.trim() || '';
+
+      if (finalResponse) {
+        sendEvent('token', { content: finalResponse });
+      }
     }
 
-    const finalResponse = response.choices[0].message.content?.trim() || '';
     const duration = Date.now() - startTime;
     console.log(`[Chat] Done in ${duration}ms | Iterations: ${toolIterations}`);
 
-    return res.json({
+    sendEvent('done', {
       question: message,
       sqlQuery,
       results: queryResults,
-      response: finalResponse
+      response: finalResponse.trim()
     });
+
+    res.end();
+    return;
 
   } catch (error) {
     const duration = Date.now() - startTime;
     logFullError(`[Chat] Error after ${duration}ms:`, error);
 
-    return res.status(500).json({
+    sendEvent('error', {
       ...buildClientError(error),
       ...(process.env.DEBUG_ERRORS === 'true' && {
         details: getErrorDetailsForClient(error)
       })
     });
+
+    res.end();
+    return;
   }
 });
 

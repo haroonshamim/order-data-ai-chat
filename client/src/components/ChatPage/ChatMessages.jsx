@@ -2,10 +2,16 @@ import React from 'react';
 import { CHAT_LOADING_TEXT } from '../../constants/chatConstants';
 
 const ChatMessages = ({ messages, loading, messagesEndRef }) => {
+  const visibleMessages = messages.filter(
+    (msg) => msg.type === 'user' || msg.text || msg.sql || msg.data
+  );
+  const lastVisibleMessage = visibleMessages[visibleMessages.length - 1];
+  const showLoading = loading && lastVisibleMessage?.type !== 'bot';
+
   return (
     <div className="messages">
-      {messages.map((msg, idx) => (
-        <div key={idx} className={`message ${msg.type}`}>
+      {visibleMessages.map((msg, idx) => (
+        <div key={msg.id || idx} className={`message ${msg.type}`}>
           <div className="message-content">
             <p>{msg.text}</p>
             {msg.sql && (
@@ -17,7 +23,7 @@ const ChatMessages = ({ messages, loading, messagesEndRef }) => {
           </div>
         </div>
       ))}
-      {loading && (
+      {showLoading && (
         <div className="message bot">
           <div className="message-content">
             <p>{CHAT_LOADING_TEXT}</p>
